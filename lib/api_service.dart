@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-
 class ApiService {
   static const String _baseUrl = 'https://schoolerp.edusathi.in/api';
 
@@ -38,6 +37,6 @@ class ApiService {
 
   static Future<String> _getToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('token') ?? '';
+    return prefs.getString('auth_token') ?? '';
   }
 }

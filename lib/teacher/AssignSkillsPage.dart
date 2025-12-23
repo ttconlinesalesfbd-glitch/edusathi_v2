@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:edusathi_v2/api_service.dart';
 
+import '../auth_helper.dart';
+
 class AssignSkillsPage extends StatefulWidget {
   const AssignSkillsPage({super.key});
 
@@ -13,15 +15,17 @@ class _AssignSkillsPageState extends State<AssignSkillsPage> {
   List<Map<String, dynamic>> studentList = [];
   List<Map<String, dynamic>> filteredList = [];
   List<Map<String, dynamic>> skills = [];
-  List<Map<String, dynamic>> examList = [];
-  String? selectedExam;
+  // List<Map<String, dynamic>> examList = [];
 
-  bool isSubmitting = false;
+  String? selectedExam;
   String? selectedSkill;
+  List exams = [];
+  bool isSubmitting = false;
   bool showTable = false;
   bool isLoading = false;
-  TextEditingController searchController = TextEditingController();
-  Map<String, TextEditingController> gradeControllers = {};
+
+  final TextEditingController searchController = TextEditingController();
+  final Map<String, TextEditingController> gradeControllers = {};
 
   @override
   void initState() {
@@ -30,39 +34,54 @@ class _AssignSkillsPageState extends State<AssignSkillsPage> {
     fetchSkills();
   }
 
+  @override
+  void dispose() {
+    searchController.dispose();
+    for (final c in gradeControllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  // ---------------- EXAMS ----------------
   Future<void> fetchExams() async {
     try {
-      final response = await ApiService.post('/get_exam', body: {});
+      final response = await AuthHelper.post(
+        context,
+        "https://schoolerp.edusathi.in/api/get_exam",
+      );
+
+      if (response == null || !mounted) return;
+
+      debugPrint("🟢 EXAMS STATUS: ${response.statusCode}");
+      debugPrint("📦 EXAMS BODY: ${response.body}");
+
       if (response.statusCode == 200) {
-        final List<dynamic> jsonResponse = jsonDecode(response.body);
-        setState(() {
-          examList = List<Map<String, dynamic>>.from(jsonResponse);
-        });
-      } else {
-        print("❌ Exam API failed: ${response.statusCode}");
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          setState(() => exams = decoded);
+        }
       }
     } catch (e) {
-      print("❌ Error fetching exams: $e");
+      debugPrint("❌ fetchExams error: $e");
     }
   }
 
+  // ---------------- SKILLS ----------------
   Future<void> fetchSkills() async {
     try {
       final response = await ApiService.post('/get_skill');
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonResponse = jsonDecode(response.body);
-        setState(() {
-          skills = List<Map<String, dynamic>>.from(jsonResponse);
-        });
-      } else {
-        print("❌ Failed to fetch skills: ${response.statusCode}");
+      if (response.statusCode == 200 && mounted) {
+        skills = List<Map<String, dynamic>>.from(jsonDecode(response.body));
+        setState(() {});
       }
-    } catch (e) {
-      print("❌ Error fetching skills: $e");
-    }
+    } catch (_) {}
   }
 
+  // ---------------- STUDENTS ----------------
   Future<void> _fetchStudents() async {
+    if (selectedExam == null || selectedSkill == null) return;
+
     setState(() {
       isLoading = true;
       showTable = false;
@@ -72,13 +91,21 @@ class _AssignSkillsPageState extends State<AssignSkillsPage> {
       final resp = await ApiService.post(
         '/teacher/skill',
         body: {
-          "ExamId": int.parse(selectedExam ?? "0"),
+          "ExamId": int.parse(selectedExam!),
           "SkillId": int.parse(selectedSkill!),
         },
       );
 
+      if (!mounted) return;
+
       final data = jsonDecode(resp.body);
+
+      // dispose old controllers
+      for (final c in gradeControllers.values) {
+        c.dispose();
+      }
       gradeControllers.clear();
+
       if (data['skills'] != null) {
         studentList = List<Map<String, dynamic>>.from(data['skills']).map((s) {
           return {
@@ -87,114 +114,88 @@ class _AssignSkillsPageState extends State<AssignSkillsPage> {
             "father": s['FatherName'],
             "roll": s['RollNo'],
             "status": s['Status'],
-            "Grade": s['Grade'],
+            "Grade": s['Grade'] ?? '',
           };
         }).toList();
 
         filteredList = List.from(studentList);
-        for (var student in filteredList) {
+
+        for (var student in studentList) {
           final id = student['studentid'].toString();
-          gradeControllers[id] ??= TextEditingController(
+          gradeControllers[id] = TextEditingController(
             text: student['Grade'] ?? '',
           );
         }
 
-        setState(() {
-          showTable = true;
-        });
+        setState(() => showTable = true);
       }
 
       if (data['msg'] != null && data['msg'].toString().trim().isNotEmpty) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Notice'),
-            content: Text(data['msg']),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
+        _alert(data['msg']);
       }
     } catch (e) {
-      print("❌ Error fetching student skill data: $e");
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      _alert("Error: $e");
     } finally {
-      setState(() => isLoading = false);
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
+  // ---------------- SUBMIT ----------------
   Future<void> _submitSkills() async {
     setState(() => isSubmitting = true);
 
     try {
-      final hasEmptyGrade = studentList.any(
-        (student) =>
-            student['Grade'] == null ||
-            student['Grade'].toString().trim().isEmpty,
-      );
+      for (var s in studentList) {
+        final id = s['studentid'].toString();
+        final grade = gradeControllers[id]?.text.trim().toUpperCase() ?? '';
 
-      if (hasEmptyGrade) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text("Validation Error"),
-            content: const Text(
-              "Please enter Grade for all students before submitting.",
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("OK"),
-              ),
-            ],
-          ),
-        );
-        setState(() => isSubmitting = false);
-        return;
+        if (grade.isEmpty) {
+          _alert("Please enter Grade for all students.");
+          setState(() => isSubmitting = false);
+          return;
+        }
+
+        s['Grade'] = grade;
       }
 
-      final skillEntries = studentList
-          .map((s) => {"StudentId": s['studentid'], "Grade": s['Grade'] ?? ''})
-          .toList();
+      final payload = {
+        "ExamId": int.parse(selectedExam!),
+        "SkillId": int.parse(selectedSkill!),
+        "skills": studentList
+            .map((s) => {"StudentId": s['studentid'], "Grade": s['Grade']})
+            .toList(),
+      };
 
       final response = await ApiService.post(
         '/teacher/skill/store',
-        body: {
-          "ExamId": int.parse(selectedExam ?? "0"),
-          "SkillId": int.parse(selectedSkill!),
-          "skills": skillEntries,
-        },
+        body: payload,
       );
+
+      if (!mounted) return;
 
       final data = jsonDecode(response.body);
-
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Success'),
-          content: Text(data['message'] ?? 'Skills updated'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
+      _alert(data['message'] ?? 'Skills updated');
     } catch (e) {
-      print("❌ Error during submission: $e");
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      _alert("Error: $e");
     } finally {
-      setState(() => isSubmitting = false);
+      if (mounted) setState(() => isSubmitting = false);
     }
+  }
+
+  void _alert(String msg) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Notice'),
+        content: Text(msg),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -227,10 +228,9 @@ class _AssignSkillsPageState extends State<AssignSkillsPage> {
                             labelText: 'Select Exam',
                             border: OutlineInputBorder(),
                           ),
-                          items: examList.map((exam) {
-                            if (examList.isNotEmpty)
-                              selectedExam ??= examList.first['ExamId']
-                                  .toString();
+                          items: exams.map((exam) {
+                            if (exams.isNotEmpty)
+                              selectedExam ??= exams.first['ExamId'].toString();
                             return DropdownMenuItem(
                               value: exam['ExamId'].toString(),
                               child: Text(exam['Exam']),

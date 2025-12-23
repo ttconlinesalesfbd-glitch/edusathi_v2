@@ -1,14 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:edusathi_v2/homework/homework_detail_page.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
 import 'package:open_file/open_file.dart';
-
+import 'package:edusathi_v2/auth_helper.dart';
+import 'package:edusathi_v2/homework/homework_detail_page.dart';
 
 class HomeworkPage extends StatefulWidget {
   const HomeworkPage({super.key});
@@ -20,6 +18,7 @@ class HomeworkPage extends StatefulWidget {
 class _HomeworkPageState extends State<HomeworkPage> {
   List<dynamic> homeworks = [];
   bool isLoading = true;
+  bool _isDownloading = false; // 🔒 download lock
 
   @override
   void initState() {
@@ -27,37 +26,38 @@ class _HomeworkPageState extends State<HomeworkPage> {
     fetchHomework();
   }
 
+  // =========================
+  // 📡 FETCH HOMEWORK
+  // =========================
   Future<void> fetchHomework() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token') ?? '';
-
-      final url = Uri.parse('https://schoolerp.edusathi.in/api/student/homework');
-
-      final response = await http.post(
-        url,
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({}),
+      final response = await AuthHelper.post(
+        context,
+        'https://schoolerp.edusathi.in/api/student/homework',
       );
 
-      print('📡 Status Code: ${response.statusCode}');
-      print('📄 Response: ${response.body}');
+      // 🔴 Token expired / auto logout
+      if (response == null) {
+        if (!mounted) return;
+        setState(() => isLoading = false);
+        return;
+      }
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+
+        if (!mounted) return;
         setState(() {
           homeworks = data;
           isLoading = false;
         });
       } else {
-        throw Exception('Failed to load homework');
+        throw Exception("Failed to load homework");
       }
     } catch (e) {
-      print('❌ Error: $e');
+      debugPrint("❌ fetchHomework error: $e");
+
+      if (!mounted) return;
       setState(() {
         isLoading = false;
         homeworks = [];
@@ -65,53 +65,75 @@ class _HomeworkPageState extends State<HomeworkPage> {
     }
   }
 
+  // =========================
+  // 📅 DATE FORMAT
+  // =========================
   String formatDate(String? dateStr) {
-    if (dateStr == null) return '';
+    if (dateStr == null || dateStr.isEmpty) return '';
     try {
-      final date = DateTime.parse(dateStr);
-      return DateFormat('dd-MM-yyyy').format(date);
-    } catch (e) {
+      return DateFormat('dd-MM-yyyy').format(DateTime.parse(dateStr));
+    } catch (_) {
       return dateStr;
     }
   }
 
+  // =========================
+  // 📥 SAFE FILE DOWNLOAD
+  // =========================
   Future<void> downloadFile(BuildContext context, String filePath) async {
+    if (_isDownloading) return;
+    _isDownloading = true;
+
     try {
+      final token = await AuthHelper.getToken();
+      if (token.isEmpty) throw Exception("No token");
+
       final fullUrl = filePath.startsWith('http')
           ? filePath
           : 'https://schoolerp.edusathi.in/$filePath';
 
-      final response = await http.get(Uri.parse(fullUrl));
+      final response = await http.get(
+        Uri.parse(fullUrl),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
-        throw Exception("Failed to download file.");
+        throw Exception("Download failed");
       }
 
-      // ✅ Use app-specific storage
       final dir = await getApplicationDocumentsDirectory();
-      final fileName = filePath.split('/').last;
+      final fileName = fullUrl.split('/').last;
       final file = File('${dir.path}/$fileName');
 
       await file.writeAsBytes(response.bodyBytes, flush: true);
 
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text("Downloaded to ${file.path}")));
 
       await OpenFile.open(file.path);
     } catch (e) {
+      debugPrint("❌ download error: $e");
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text("Download error: $e")));
+      ).showSnackBar(const SnackBar(content: Text("Download failed")));
+    } finally {
+      _isDownloading = false;
     }
   }
 
+  // =========================
+  // 🧱 UI (UNCHANGED)
+  // =========================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Homework', style: TextStyle(color: Colors.white)),
         backgroundColor: Colors.deepPurple,
-        iconTheme: IconThemeData(color: Colors.white),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -186,10 +208,7 @@ class _HomeworkPageState extends State<HomeworkPage> {
                                   color: Colors.deepPurple,
                                 ),
                                 onPressed: () {
-                                  downloadFile(
-                                    context,
-                                    attachmentUrl,
-                                  ); // ✅ Correct
+                                  downloadFile(context, attachmentUrl);
                                 },
                               ),
                             ),

@@ -1,7 +1,7 @@
 import 'dart:convert';
+import 'package:edusathi_v2/auth_helper.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+
 
 class Exam {
   final String id;
@@ -36,14 +36,13 @@ class ExamSchedulePage extends StatefulWidget {
 }
 
 class _ExamSchedulePageState extends State<ExamSchedulePage> {
- 
   final String getExamsUrl = 'https://schoolerp.edusathi.in/api/get_exam';
-  final String getScheduleUrl =
-      'https://schoolerp.edusathi.in/api/schedule';
+  final String getScheduleUrl = 'https://schoolerp.edusathi.in/api/schedule';
 
   List<Exam> exams = [];
   Exam? selectedExam;
   List<ExamScheduleItem> scheduleContent = [];
+
   bool isLoadingExams = true;
   bool isLoadingSchedule = false;
 
@@ -53,41 +52,39 @@ class _ExamSchedulePageState extends State<ExamSchedulePage> {
     fetchExams();
   }
 
-  Future<Map<String, String>> _getHeaders() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token');
-
-    if (token == null) {
-      throw Exception('Authentication token not found. Please log in.');
-    }
-
-    return {
-      'Authorization': 'Bearer $token',
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    };
-  }
-
+  // ====================================================
+  // 🔹 FETCH EXAMS (SAFE)
+  // ====================================================
   Future<void> fetchExams() async {
-    setState(() {
-      isLoadingExams = true;
-    });
+    if (!mounted) return;
+    setState(() => isLoadingExams = true);
 
     try {
-      final headers = await _getHeaders();
-      final response = await http.post(
-        Uri.parse(getExamsUrl),
-        headers: headers,
+      final res = await AuthHelper.post(
+        context,
+        getExamsUrl,
+        body: {}, // 🔥 IMPORTANT: empty JSON body
       );
 
-      if (response.statusCode == 200) {
-        final List<dynamic> decoded = jsonDecode(response.body);
+      if (res == null) {
+        if (!mounted) return;
+        setState(() => isLoadingExams = false);
+        return;
+      }
 
-        // Convert dynamic list to Exam model list
-        final loadedExams = decoded
-            .map((e) => Exam(id: e['ExamId'], name: e['Exam']))
-            .toList();
+      debugPrint("📘 Exams response: ${res.body}");
 
+      if (res.statusCode == 200) {
+        final List<dynamic> decoded = jsonDecode(res.body);
+
+        final loadedExams = decoded.map((e) {
+          return Exam(
+            id: e['ExamId'].toString(),
+            name: e['Exam']?.toString() ?? '',
+          );
+        }).toList();
+
+        if (!mounted) return;
         setState(() {
           exams = loadedExams;
           isLoadingExams = false;
@@ -98,37 +95,42 @@ class _ExamSchedulePageState extends State<ExamSchedulePage> {
           fetchScheduleForExam(selectedExam!.id);
         }
       } else {
-        print('Failed to load exams. Status: ${response.statusCode}');
-        setState(() {
-          isLoadingExams = false;
-        });
-        _showSnackBar('Failed to load exams.');
+        _failExams("Failed to load exams");
       }
     } catch (e) {
-      print('Error fetching exams: $e');
-      setState(() {
-        isLoadingExams = false;
-      });
-      _showSnackBar('An error occurred: $e');
+      debugPrint("❌ fetchExams error: $e");
+      _failExams("Something went wrong");
     }
   }
 
+  void _failExams(String msg) {
+    if (!mounted) return;
+    setState(() => isLoadingExams = false);
+    _showSnackBar(msg);
+  }
+
+  // ====================================================
+  // 🔹 FETCH SCHEDULE (SAFE)
+  // ====================================================
   Future<void> fetchScheduleForExam(String examId) async {
+    if (!mounted) return;
+
     setState(() {
       isLoadingSchedule = true;
-      scheduleContent = [];
+      scheduleContent.clear();
     });
 
     try {
-      final headers = await _getHeaders();
-      final response = await http.post(
-        Uri.parse(getScheduleUrl),
-        headers: headers,
-        body: jsonEncode({'ExamId': examId}),
+      final res = await AuthHelper.post(
+        context,
+        getScheduleUrl,
+        body: {'ExamId': examId},
       );
 
-      if (response.statusCode == 200) {
-        final List<dynamic> decoded = jsonDecode(response.body);
+      if (res == null) return;
+
+      if (res.statusCode == 200) {
+        final List decoded = jsonDecode(res.body);
 
         final loadedSchedule = decoded
             .map(
@@ -143,36 +145,33 @@ class _ExamSchedulePageState extends State<ExamSchedulePage> {
             )
             .toList();
 
+        if (!mounted) return;
         setState(() {
           scheduleContent = loadedSchedule;
           isLoadingSchedule = false;
         });
       } else {
-        setState(() {
-          scheduleContent = [];
-          isLoadingSchedule = false;
-        });
-        _showSnackBar(
-          'Failed to load schedule. Status: ${response.statusCode}',
-        );
+        _failSchedule("Failed to load schedule");
       }
     } catch (e) {
-      setState(() {
-        scheduleContent = [];
-        isLoadingSchedule = false;
-      });
-      _showSnackBar('An error occurred: $e');
+      _failSchedule("Something went wrong");
     }
   }
 
-  void _showSnackBar(String message) {
-    if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    }
+  void _failSchedule(String msg) {
+    if (!mounted) return;
+    setState(() => isLoadingSchedule = false);
+    _showSnackBar(msg);
   }
 
+  void _showSnackBar(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // ====================================================
+  // 🧱 UI (UNCHANGED)
+  // ====================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -182,7 +181,6 @@ class _ExamSchedulePageState extends State<ExamSchedulePage> {
           style: TextStyle(color: Colors.white),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
-        elevation: 2,
         backgroundColor: Colors.deepPurple,
       ),
       body: Column(
@@ -220,9 +218,7 @@ class _ExamSchedulePageState extends State<ExamSchedulePage> {
 
           return GestureDetector(
             onTap: () {
-              setState(() {
-                selectedExam = exam;
-              });
+              setState(() => selectedExam = exam);
               fetchScheduleForExam(exam.id);
             },
             child: Container(
@@ -296,11 +292,10 @@ class _ExamSchedulePageState extends State<ExamSchedulePage> {
       margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Subject Name
             Text(
               item.subject,
               style: const TextStyle(
@@ -310,50 +305,30 @@ class _ExamSchedulePageState extends State<ExamSchedulePage> {
               ),
             ),
             const Divider(height: 16),
-
-            // Date and Day
+            _buildInfoRow(Icons.calendar_today, 'Date', item.date),
+            _buildInfoRow(Icons.calendar_view_day, 'Day', item.day),
             _buildInfoRow(
-              icon: Icons.calendar_today,
-              label: 'Date',
-              value: item.date,
+              Icons.access_time,
+              'Time',
+              '${item.time} - ${item.endTime}',
             ),
-            _buildInfoRow(
-              icon: Icons.calendar_view_day,
-              label: 'Day',
-              value: item.day,
-            ),
-
-            // Time and Remark
-            _buildInfoRow(
-              icon: Icons.access_time,
-              label: 'Time',
-              value: '${item.time} - ${item.endTime}',
-            ),
-            _buildInfoRow(
-              icon: Icons.info_outline,
-              label: 'Remark',
-              value: item.remark,
-            ),
+            _buildInfoRow(Icons.info_outline, 'Remark', item.remark),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInfoRow({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
+  Widget _buildInfoRow(IconData icon, String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, size: 18, color: Colors.deepPurple),
           const SizedBox(width: 10),
           SizedBox(
-            width: 80, 
+            width: 80,
             child: Text(
               '$label:',
               style: const TextStyle(fontWeight: FontWeight.w500),

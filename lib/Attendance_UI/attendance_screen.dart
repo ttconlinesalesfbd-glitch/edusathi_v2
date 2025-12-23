@@ -1,8 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:edusathi_v2/auth_helper.dart';
 
 class AttendanceScreen extends StatefulWidget {
   const AttendanceScreen({super.key});
@@ -30,42 +29,65 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     _fetchAttendance();
   }
 
+  // ====================================================
+  // 🔐 SAFE ATTENDANCE FETCH (iOS + Android)
+  // ====================================================
   Future<void> _fetchAttendance({String? selectedDate}) async {
+    if (!mounted) return;
+
     setState(() => _isLoading = true);
 
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
     final dateToSend =
         selectedDate ?? DateFormat('yyyy-MM-dd').format(DateTime.now());
 
-    final url = Uri.parse(
-      'https://schoolerp.edusathi.in/api/teacher/std_attendance/report',
-    );
-    final response = await http.post(
-      url,
-      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-      body: {'Date': dateToSend},
-    );
+    try {
+      final res = await AuthHelper.post(
+        context,
+        'https://schoolerp.edusathi.in/api/teacher/std_attendance/report',
+        body: {'Date': dateToSend},
+      );
 
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      setState(() {
-        _present = data['present'] ?? 0;
-        _absent = data['absent'] ?? 0;
-        _leave = data['leave'] ?? 0;
-        _half = data['half_day'] ?? 0;
-        _holiday = data['holiday'] ?? 0;
+      // 🔐 AuthHelper handles 401 + logout
+      if (res == null) return;
 
-        _statusMap = {
-          for (var item in data['days']) item['date']: item['status'],
-        };
+      debugPrint("📥 ATTENDANCE STATUS: ${res.statusCode}");
+      debugPrint("📥 ATTENDANCE BODY: ${res.body}");
 
-        _selectedDate = dateToSend;
-        _isLoading = false;
-      });
-    } else {
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+
+        if (!mounted) return;
+
+        setState(() {
+          _present = data['present'] ?? 0;
+          _absent = data['absent'] ?? 0;
+          _leave = data['leave'] ?? 0;
+          _half = data['half_day'] ?? 0;
+          _holiday = data['holiday'] ?? 0;
+
+          _statusMap = {
+            for (final item in (data['days'] ?? []))
+              item['date'].toString(): item['status'] ?? 0,
+          };
+
+          _selectedDate = dateToSend;
+        });
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load attendance")),
+        );
+      }
+    } catch (e) {
+      debugPrint("🚨 ATTENDANCE ERROR: $e");
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Something went wrong")),
+      );
+    } finally {
+      if (!mounted) return;
       setState(() => _isLoading = false);
-      print('❌ Error: ${response.statusCode} → ${response.body}');
     }
   }
 
@@ -92,7 +114,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             child: Column(
               children: [
                 const SizedBox(height: 12),
-                _buildCalendarContainer(year, month, daysInMonth, startWeekday),
+                _buildCalendarContainer(
+                  year,
+                  month,
+                  daysInMonth,
+                  startWeekday,
+                ),
                 const SizedBox(height: 10),
                 _buildSummaryBoxes(),
               ],
@@ -103,7 +130,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               child: Container(
                 color: Colors.black.withOpacity(0.1),
                 child: const Center(
-                  child: CircularProgressIndicator(color: Colors.deepPurple),
+                  child: CircularProgressIndicator(
+                    color: Colors.deepPurple,
+                  ),
                 ),
               ),
             ),
@@ -111,6 +140,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       ),
     );
   }
+
+  // ===================== UI (UNCHANGED) =====================
 
   Widget _buildCalendarContainer(
     int year,
@@ -129,13 +160,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       ),
       child: Column(
         children: [
-          // Month Header
           Container(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
             decoration: const BoxDecoration(
               borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
               gradient: LinearGradient(
-                // colors: [Color(0xFF6A1B9A), Color(0xFF8E24AA)],
                 colors: [Colors.lightBlue, Colors.blueAccent],
               ),
             ),
@@ -150,8 +179,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         _focusedMonth.year,
                         _focusedMonth.month - 1,
                       );
-                      _fetchAttendance();
                     });
+                    _fetchAttendance();
                   },
                 ),
                 Text(
@@ -170,35 +199,35 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         _focusedMonth.year,
                         _focusedMonth.month + 1,
                       );
-                      _fetchAttendance();
                     });
+                    _fetchAttendance();
                   },
                 ),
               ],
             ),
           ),
 
-          // Weekdays
           Padding(
             padding: const EdgeInsets.all(10),
             child: Row(
-              children: ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d) {
-                return Expanded(
-                  child: Center(
-                    child: Text(
-                      d,
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontWeight: FontWeight.w600,
+              children: ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+                  .map(
+                    (d) => Expanded(
+                      child: Center(
+                        child: Text(
+                          d,
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                );
-              }).toList(),
+                  )
+                  .toList(),
             ),
           ),
 
-          // Dates Grid
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: GridView.builder(
@@ -209,10 +238,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 crossAxisCount: 7,
                 mainAxisSpacing: 6,
                 crossAxisSpacing: 6,
-                childAspectRatio: 1.0,
               ),
-             itemBuilder: (context, idx) {
+              itemBuilder: (context, idx) {
                 if (idx < startWeekday) return const SizedBox();
+
                 final day = idx - startWeekday + 1;
                 final date = DateTime(year, month, day);
                 final dateStr = DateFormat('yyyy-MM-dd').format(date);
@@ -220,6 +249,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 final status = _statusMap[dateStr] ?? 0;
                 final dotColor = status > 0 ? Colors.green : Colors.grey;
                 final isSelected = _selectedDate == dateStr;
+
                 return GestureDetector(
                   onTap: () {
                     if (status > 0) {
@@ -228,13 +258,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   },
                   child: Container(
                     decoration: BoxDecoration(
-                      color: isSelected ? Colors.green.shade50 : Colors.white,
+                      color:
+                          isSelected ? Colors.green.shade50 : Colors.white,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
                         color: isSelected
                             ? Colors.lightGreen
                             : Colors.grey.shade300,
-                        width: isSelected ? 2.0 : 1.0,
+                        width: isSelected ? 2 : 1,
                       ),
                     ),
                     child: Stack(
@@ -242,7 +273,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                       children: [
                         Text(
                           '$day',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          style:
+                              const TextStyle(fontWeight: FontWeight.w600),
                         ),
                         Positioned(
                           bottom: 4,
@@ -276,15 +308,19 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           Align(
             alignment: Alignment.centerLeft,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: const BoxDecoration(
                 color: Colors.grey,
-                borderRadius: BorderRadius.only(topLeft: Radius.circular(10)),
+                borderRadius:
+                    BorderRadius.only(topLeft: Radius.circular(10)),
               ),
-
               child: Text(
-                'Date Record (${DateFormat('dd-MMM-yyyy').format(_selectedDate != null ? DateTime.parse(_selectedDate!) : DateTime.now())})',
-
+                'Date Record (${DateFormat('dd-MMM-yyyy').format(
+                  _selectedDate != null
+                      ? DateTime.parse(_selectedDate!)
+                      : DateTime.now(),
+                )})',
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
@@ -293,21 +329,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             ),
           ),
           Container(
-            decoration: BoxDecoration(
+            padding: const EdgeInsets.all(10),
+            decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: const BorderRadius.only(
+              borderRadius: BorderRadius.only(
                 bottomLeft: Radius.circular(16),
                 bottomRight: Radius.circular(16),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black12,
-                  blurRadius: 4,
-                  offset: Offset(0, 2),
-                ),
-              ],
             ),
-            padding: const EdgeInsets.all(10),
             child: Column(
               children: [
                 Row(
@@ -323,7 +352,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     _buildStatusBox('HALF-DAY', _half, Colors.blue),
-                    _buildStatusBox('HOLIDAY', _holiday, Colors.brown.shade400),
+                    _buildStatusBox(
+                      'HOLIDAY',
+                      _holiday,
+                      Colors.brown,
+                    ),
                   ],
                 ),
               ],

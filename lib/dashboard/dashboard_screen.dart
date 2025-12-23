@@ -1,38 +1,40 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:edusathi_v2/Attendance_UI/attendance_box.dart';
-import 'package:edusathi_v2/Attendance_UI/stu_attendance_page.dart';
-import 'package:edusathi_v2/Notification/notification_list.dart';
-import 'package:edusathi_v2/complaint/view_complaints_page.dart';
-import 'package:edusathi_v2/connect_teacher/connect_with_us.dart';
-import 'package:edusathi_v2/dashboard/attendance_pie_chart.dart';
-import 'package:edusathi_v2/dashboard/calendar.dart';
 import 'package:edusathi_v2/dashboard/stu_result.dart';
-import 'package:edusathi_v2/dashboard/timetable_page.dart';
 import 'package:edusathi_v2/exam_schedule.dart';
-import 'package:edusathi_v2/homework/homework_model.dart';
-import 'package:edusathi_v2/homework/homework_page.dart';
-import 'package:edusathi_v2/login_page.dart';
-import 'package:edusathi_v2/payment/fee_details_page.dart';
-import 'package:edusathi_v2/payment/payment_page.dart';
-import 'package:edusathi_v2/profile_page.dart';
-import 'package:edusathi_v2/school_info_page.dart';
-import 'package:edusathi_v2/subjects_page.dart';
 import 'package:edusathi_v2/syllabus.dart';
-import 'package:edusathi_v2/Attendance_UI/stu_attendance_report.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:edusathi_v2/Attendance_UI/stu_attendance_page.dart';
 
+import 'package:edusathi_v2/Attendance_UI/attendance_pie_chart.dart';
+import 'package:edusathi_v2/Notification/notification_list.dart';
+import 'package:edusathi_v2/connect_teacher/connect_with_us.dart';
+// import 'package:edusathi_v2/connect_teacher/student_chat.dart';
+import 'package:edusathi_v2/dashboard/calendar.dart';
+import 'package:edusathi_v2/homework/homework_model.dart';
+import 'package:edusathi_v2/homework/homework_page.dart';
+import 'package:edusathi_v2/dashboard/timetable_page.dart';
+import 'package:edusathi_v2/login_page.dart';
+import 'package:edusathi_v2/payment/fee_details_page.dart';
+import 'package:edusathi_v2/payment/payment_page.dart';
+import 'package:edusathi_v2/profile_page.dart';
+import 'package:edusathi_v2/school_info_page.dart';
+import 'package:edusathi_v2/complaint/view_complaints_page.dart';
+import 'package:edusathi_v2/subjects_page.dart';
+
+import 'package:edusathi_v2/Attendance_UI/stu_attendance_report.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
-
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
@@ -56,6 +58,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> notices = [];
   List<dynamic> events = [];
   List<dynamic> siblings = [];
+  final FlutterSecureStorage secureStorage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+
   @override
   void initState() {
     super.initState();
@@ -64,10 +71,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> initData() async {
     await loadProfileData();
-    await fetchDashboardData();
+    await fetchDashboardData(context);
     setState(() {
       isLoading = false;
     });
+  }
+
+  Future<String> getAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // 1️⃣ Secure storage (PRIMARY)
+    final secureToken = await secureStorage.read(key: 'auth_token');
+    if (secureToken != null && secureToken.isNotEmpty) {
+      debugPrint("🔐 TOKEN FROM SECURE STORAGE");
+      return secureToken;
+    }
+
+    // 2️⃣ SharedPreferences fallback (ANDROID SAFETY)
+    final prefsToken = prefs.getString('auth_token') ?? '';
+    if (prefsToken.isNotEmpty) {
+      debugPrint("🔐 TOKEN FROM SHARED PREFS");
+      return prefsToken;
+    }
+
+    debugPrint("❌ NO TOKEN FOUND");
+    return '';
   }
 
   Future<void> loadProfileData() async {
@@ -79,34 +107,55 @@ class _DashboardScreenState extends State<DashboardScreen> {
     studentsection = prefs.getString('section') ?? '';
   }
 
-  Future<void> fetchDashboardData() async {
+  Future<void> fetchDashboardData(BuildContext context) async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+    final token = await getAuthToken();
+
+    debugPrint("📡 DASHBOARD TOKEN: $token");
+
+    if (token.isEmpty) {
+      debugPrint("🚨 EMPTY TOKEN → FORCE LOGOUT");
+
+      await secureStorage.delete(key: 'auth_token');
+      await prefs.clear();
+
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => LoginPage()),
+        (_) => false,
+      );
+      return;
+    }
 
     final response = await http.post(
       Uri.parse('https://schoolerp.edusathi.in/api/student/dashboard'),
       headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
     );
 
+    debugPrint("🔵 DASHBOARD STATUS: ${response.statusCode}");
+    debugPrint("🔵 DASHBOARD BODY: ${response.body}");
+
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
 
       dues = data['dues'] ?? 0;
       payments = int.tryParse(data['payments'].toString()) ?? 0;
+
       final rawDate = data['payment_date'] ?? '';
       if (rawDate.isNotEmpty) {
         try {
           final dateObject = DateTime.parse(rawDate);
           lastPaymentDate =
               '${dateObject.day}/${dateObject.month}/${dateObject.year}';
-        } catch (e) {
+        } catch (_) {
           lastPaymentDate = rawDate;
         }
-      } else {
-        lastPaymentDate = '';
       }
+
       status = data['today_status'] ?? '';
       subjects = data['subjects'] ?? 0;
+
       attendance = {
         'present': data['attendances']?['present'] ?? 0,
         'absent': data['attendances']?['absent'] ?? 0,
@@ -114,29 +163,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'half_day': data['attendances']?['half_day'] ?? 0,
         'working_days': data['attendances']?['working_days'] ?? 0,
       };
+
       homeworks = List<Map<String, dynamic>>.from(data['homeworks'] ?? []);
       notices = data['notices'] ?? [];
       events = data['events'] ?? [];
       siblings = data['siblings'] ?? [];
-    } else {
-      if (response.statusCode == 401) {
-        await prefs.clear();
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => LoginPage()),
-          (route) => false,
-        );
 
-        return;
-      }
-      print('❌ Dashboard fetch failed: ${response.statusCode}');
+      return;
     }
-    prefs.getKeys().forEach((key) {
-      print('$key = ${prefs.get(key)}');
-      FirebaseMessaging.instance.getToken().then((fcmToken) {
-        print("🟢 FCM Device Token: $fcmToken");
-      });
-    });
+
+    if (response.statusCode == 401) {
+      debugPrint("🚫 DASHBOARD 401 → SESSION EXPIRED");
+
+      await secureStorage.delete(key: 'auth_token');
+      await prefs.clear();
+
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => LoginPage()),
+        (_) => false,
+      );
+    }
   }
 
   void _showSiblingPopup(BuildContext context) {
@@ -280,7 +328,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final prefs = await SharedPreferences.getInstance();
 
       // Step 2: Get saved token before making request
-      final token = prefs.getString('token') ?? '';
+      final token = await getAuthToken();
+
       print('🔑 Using Token: $token');
 
       // Step 3: Prepare API request
@@ -326,8 +375,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (data['status'] == true) {
         print('✅ Shift Login Successful for ID: $studentId');
 
-        // Step 8: Store new login info & token
-        await prefs.setString('token', data['token'] ?? '');
+        await secureStorage.write(key: 'auth_token', value: data['token']);
+        await prefs.setString('auth_token', data['token']);
+
         await prefs.setString('user_type', data['user_type'] ?? '');
         await prefs.setString(
           'student_name',
@@ -840,6 +890,17 @@ class LeftSidebarMenu extends StatelessWidget {
     required this.studentClass,
     required this.studentsection,
   });
+  Future<String> _getTokenForLogout() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storage = const FlutterSecureStorage();
+
+    final secureToken = await storage.read(key: 'auth_token');
+    if (secureToken != null && secureToken.isNotEmpty) {
+      return secureToken;
+    }
+
+    return prefs.getString('auth_token') ?? '';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -901,7 +962,6 @@ class LeftSidebarMenu extends StatelessWidget {
               title: 'Dashboard',
               onTap: () => Navigator.pop(context),
             ),
-
             sidebarTile(
               icon: Icons.person,
               title: 'Profile',
@@ -933,7 +993,6 @@ class LeftSidebarMenu extends StatelessWidget {
                 );
               },
             ),
-
             sidebarTile(
               icon: Icons.calendar_today,
               title: 'Time-Table',
@@ -1058,60 +1117,63 @@ class LeftSidebarMenu extends StatelessWidget {
               onTap: () {
                 showDialog(
                   context: context,
-                  builder: (context) => AlertDialog(
-                    title: Text("Logout"),
-                    content: Text("Are you sure you want to logout?"),
+                  builder: (dialogContext) => AlertDialog(
+                    title: const Text("Logout"),
+                    content: const Text("Are you sure you want to logout?"),
                     actions: [
                       TextButton(
-                        child: Text("Cancel"),
-                        onPressed: () => Navigator.pop(context),
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text("Cancel"),
                       ),
                       TextButton(
-                        child: Text("Logout"),
+                        child: const Text("Logout"),
                         onPressed: () async {
+                          Navigator.pop(dialogContext); // close dialog
+
                           final prefs = await SharedPreferences.getInstance();
-                          final token = prefs.getString('token') ?? '';
+                          const storage = FlutterSecureStorage();
+                          final token = await _getTokenForLogout();
 
-                          final response = await http.post(
-                            Uri.parse(
-                              'https://schoolerp.edusathi.in/api/logout',
-                            ),
-                            headers: {
-                              'Authorization': 'Bearer $token',
-                              'Accept': 'application/json',
-                            },
-                          );
+                          debugPrint("🔐 LOGOUT TOKEN: $token");
 
-                          print("🔐 Logout API Response: ${response.body}");
-
-                          if (response.statusCode == 200) {
-                            final data = jsonDecode(response.body);
-
-                            if (data['status'] == true ||
-                                data['message'] == 'Logged out') {
-                              await prefs.clear();
-
-                              Navigator.pushAndRemoveUntil(
-                                context,
-                                MaterialPageRoute(builder: (_) => LoginPage()),
-                                (route) => false,
-                              );
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    "Logout failed: ${data['message']}",
-                                  ),
-                                ),
-                              );
-                            }
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  "Logout failed. Please try again.",
-                                ),
+                          try {
+                            final response = await http.post(
+                              Uri.parse(
+                                'https://schoolerp.edusathi.in/api/logout',
                               ),
+                              headers: {
+                                'Authorization': 'Bearer $token',
+                                'Accept': 'application/json',
+                              },
+                            );
+
+                            debugPrint(
+                              "🔐 Logout Status: ${response.statusCode}",
+                            );
+                            debugPrint("🔐 Logout Body: ${response.body}");
+
+                            // ✅ ALWAYS clear local session
+                            await storage.delete(key: 'auth_token');
+                            await prefs.clear();
+
+                            if (!context.mounted) return;
+
+                            Navigator.pushAndRemoveUntil(
+                              context,
+                              MaterialPageRoute(builder: (_) => LoginPage()),
+                              (_) => false,
+                            );
+                          } catch (e) {
+                            debugPrint("🚨 LOGOUT ERROR: $e");
+
+                            await storage.delete(key: 'auth_token');
+                            await prefs.clear();
+
+                            if (!context.mounted) return;
+                            Navigator.pushAndRemoveUntil(
+                              context,
+                              MaterialPageRoute(builder: (_) => LoginPage()),
+                              (_) => false,
                             );
                           }
                         },

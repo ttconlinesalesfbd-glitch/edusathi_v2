@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:edusathi_v2/dashboard/dashboard_screen.dart';
 import 'package:edusathi_v2/login_page.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:edusathi_v2/notification/notification_service.dart';
+import 'package:edusathi_v2/teacher/teacher_dashboard_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -16,45 +15,32 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    initializeNotifications();
-    checkLoginStatus();
+    _checkLoginStatus();
   }
 
-  void initializeNotifications() async {
-    // 🔔 Local notification setup
-    NotificationService.initialize(context);
-
-    // 🔔 Foreground notification handler
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print("📲 [Foreground] ${message.notification?.title}");
-      NotificationService.display(message);
-    });
-
-    // 🔒 Permission request (needed for Android 13+)
-    await FirebaseMessaging.instance.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
-  }
-
-  Future<void> checkLoginStatus() async {
-    await Future.delayed(const Duration(seconds: 2)); // Splash delay
+  Future<void> _checkLoginStatus() async {
+    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
 
     final prefs = await SharedPreferences.getInstance();
-    final isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+    final token = prefs.getString('auth_token') ?? '';
+    final userType = prefs.getString('user_type') ?? '';
 
-    if (isLoggedIn) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const DashboardScreen()),
-      );
-    } else {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => LoginPage()),
-      );
-    }
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) {
+          if (token.isNotEmpty) {
+            return userType == 'Teacher'
+                ? const TeacherDashboardScreen()
+                : const DashboardScreen();
+          } else {
+            return LoginPage();
+          }
+        },
+      ),
+      (route) => false,
+    );
   }
 
   @override
@@ -67,7 +53,7 @@ class _SplashScreenState extends State<SplashScreen> {
           children: [
             Image.asset('assets/images/logo.png', height: 120),
             const SizedBox(height: 20),
-            
+            const CircularProgressIndicator(color: Colors.deepPurple),
           ],
         ),
       ),

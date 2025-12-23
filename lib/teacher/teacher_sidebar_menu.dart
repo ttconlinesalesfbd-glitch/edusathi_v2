@@ -1,28 +1,24 @@
-import 'dart:convert';
-import 'package:edusathi_v2/alert/stu_alert.dart';
 import 'package:edusathi_v2/connect_teacher/teacher_chat_screen.dart';
 import 'package:edusathi_v2/exam_schedule.dart';
 import 'package:edusathi_v2/syllabus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-
 import 'package:edusathi_v2/login_page.dart';
+import 'package:edusathi_v2/alert/stu_alert.dart';
 import 'package:edusathi_v2/payment/payment_teacher_screen.dart';
 import 'package:edusathi_v2/school_info_page.dart';
 import 'package:edusathi_v2/teacher/AssignMarksPage.dart';
-
 import 'package:edusathi_v2/teacher/AssignSkillsPage.dart';
 import 'package:edusathi_v2/teacher/ResultcardPage.dart';
 import 'package:edusathi_v2/Attendance_UI/mark_attendance_page.dart';
 import 'package:edusathi_v2/teacher/complaint_teacher/teacher_complaint_list_page.dart';
-// import 'package:edusathi_v2/teacher/complaint_teacher/teacher_view_complaint_page.dart';
 import 'package:edusathi_v2/Attendance_UI/teacher_attendance_screen.dart';
 import 'package:edusathi_v2/teacher/teacher_dashboard_screen.dart';
 import 'package:edusathi_v2/teacher/teacher_homework_page.dart';
 import 'package:edusathi_v2/teacher/teacher_profile_page.dart';
 import 'package:edusathi_v2/Attendance_UI/attendance_screen.dart';
-// import 'package:edusathi_v2/complaint/view_complaints_page.dart';
 import 'package:edusathi_v2/teacher/teacher_timetable.dart';
 
 class TeacherSidebarMenu extends StatefulWidget {
@@ -42,17 +38,68 @@ class _TeacherSidebarMenuState extends State<TeacherSidebarMenu> {
   void initState() {
     super.initState();
     loadTeacherInfo();
-    // fetchDashboardData();
   }
 
   Future<void> loadTeacherInfo() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
     setState(() {
-      teacherName = prefs.getString('teacher_name') ?? 'name';
-      teacherPhoto = prefs.getString('teacher_photo') ?? 'photo';
-      teacherClass = prefs.getString('teacher_class') ?? 'class';
-      teacherSection = prefs.getString('teacher_section') ?? 'section';
+      teacherName = prefs.getString('teacher_name') ?? '';
+      teacherPhoto = prefs.getString('teacher_photo') ?? '';
+      teacherClass = prefs.getString('teacher_class') ?? '';
+      teacherSection = prefs.getString('teacher_section') ?? '';
     });
+  }
+
+  String getPhotoUrl(String photo) {
+    if (photo.isEmpty) return '';
+    return photo.startsWith('http')
+        ? photo
+        : 'https://schoolerp.edusathi.in/$photo';
+  }
+
+  void _navigate(BuildContext context, Widget page) {
+    Navigator.pop(context); // ✅ close drawer
+    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+  }
+
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+
+  Future<void> _logout(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // ✅ FIX: correct token key
+    final token = prefs.getString('auth_token') ?? '';
+
+    try {
+      if (token.isNotEmpty) {
+        await http.post(
+          Uri.parse('https://schoolerp.edusathi.in/api/logout'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Accept': 'application/json',
+          },
+        );
+      }
+    } catch (_) {
+      // ignore API failure, still logout locally
+    }
+
+    // ✅ FIX: clear BOTH storages
+    await prefs.clear();
+    await _secureStorage.delete(key: 'auth_token');
+
+    if (!mounted) return;
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => LoginPage()),
+      (_) => false,
+    );
   }
 
   @override
@@ -62,18 +109,14 @@ class _TeacherSidebarMenuState extends State<TeacherSidebarMenu> {
         children: [
           Container(
             color: Colors.deepPurple,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             height: 130,
+            padding: const EdgeInsets.all(12),
             child: Row(
               children: [
                 CircleAvatar(
                   radius: 26,
                   backgroundImage: teacherPhoto.isNotEmpty
-                      ? NetworkImage(
-                          teacherPhoto.startsWith('http')
-                              ? teacherPhoto
-                              : 'https://schoolerp.edusathi.in/$teacherPhoto',
-                        )
+                      ? NetworkImage(getPhotoUrl(teacherPhoto))
                       : const AssetImage('assets/images/logo.png')
                             as ImageProvider,
                 ),
@@ -82,17 +125,14 @@ class _TeacherSidebarMenuState extends State<TeacherSidebarMenu> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
                         teacherName,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 14,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 2),
                       const Text(
                         'Class Teacher',
                         style: TextStyle(color: Colors.white70, fontSize: 12),
@@ -111,142 +151,116 @@ class _TeacherSidebarMenuState extends State<TeacherSidebarMenu> {
             ),
           ),
 
-          sidebarItem(context, Icons.dashboard, 'Dashboard', () {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (_) => const TeacherDashboardScreen()),
-            );
-          }),
-
-          sidebarItem(context, Icons.person, 'Profile', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const TeacherProfilePage()),
-            );
-          }),
-
           sidebarItem(
             context,
-            Icons.playlist_add_check_circle_outlined,
+            Icons.dashboard,
+            'Dashboard',
+            () => _navigate(context, const TeacherDashboardScreen()),
+          ),
+          // sidebarItem(
+          //   context,
+          //   Icons.person,
+          //   'Admin',
+          //   () => _navigate(context, const AdminDashboardPage()),
+          // ),
+          sidebarItem(
+            context,
+            Icons.person,
+            'Profile',
+            () => _navigate(context, const TeacherProfilePage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.playlist_add_check_circle,
             'Mark Attendance',
-            () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => MarkAttendancePage()),
-              );
-            },
+            () => _navigate(context, MarkAttendancePage()),
           ),
-
           sidebarItem(
             context,
-            Icons.add_chart_outlined,
+            Icons.add_chart,
             'Attendance Report',
-            () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AttendanceScreen()),
-              );
-            },
+            () => _navigate(context, const AttendanceScreen()),
           ),
-          sidebarItem(context, Icons.book, 'Homeworks', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => TeacherHomeworkPage()),
-            );
-          }),
-          sidebarItem(context, Icons.add_alert, 'Student Alert', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) =>StudentAlertPage()),
-            );
-          }),
-          sidebarItem(context, Icons.assignment, 'Assign Marks', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => AssignMarksPage()),
-            );
-          }),
-          sidebarItem(context, Icons.add_alert, 'Student Alert', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => StudentAlertPage()),
-            );
-          }),
-          sidebarItem(context, Icons.assignment, 'Assign Marks', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => AssignMarksPage()),
-            );
-          }),
-          sidebarItem(context, Icons.book_sharp, 'Syllabus', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => SyllabusPage()),
-            );
-          }),
           sidebarItem(
             context,
-            Icons.receipt_long_outlined,
-            'Exam Schedule',
-            () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => ExamSchedulePage()),
-              );
-            },
+            Icons.book,
+            'Homeworks',
+            () => _navigate(context, const TeacherHomeworkPage()),
           ),
-          sidebarItem(context, Icons.star_rate, 'Assign Skills', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => AssignSkillsPage()),
-            );
-          }),
-          sidebarItem(context, Icons.list_alt, 'Result ', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => ResultCardPage()),
-            );
-          }),
-          sidebarItem(context, Icons.schedule, 'Timetable', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => TeacherTimeTablePage()),
-            );
-          }),
+          sidebarItem(
+            context,
+            Icons.add_alert,
+            'Student Alert',
+            () => _navigate(context, StudentAlertPage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.assignment,
+            'Assign Marks',
+            () => _navigate(context, const AssignMarksPage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.book_sharp,
+            'Syllabus',
+            () => _navigate(context, const SyllabusPage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.receipt,
+            'Exam Schedule',
+            () => _navigate(context, const ExamSchedulePage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.star,
+            'Assign Skills',
+            () => _navigate(context, const AssignSkillsPage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.list_alt,
+            'Result',
+            () => _navigate(context, const ResultCardPage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.schedule,
+            'Timetable',
+            () => _navigate(context, const TeacherTimeTablePage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.report,
+            'Complaint',
+            () => _navigate(context, const TeacherComplaintListPage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.payment,
+            'Payments',
+            () => _navigate(context, const PaymentTeacherScreen()),
+          ),
+          sidebarItem(
+            context,
+            Icons.calendar_month,
+            'My Attendance',
+            () => _navigate(context, const TeacherAttendanceScreen()),
+          ),
+          sidebarItem(
+            context,
+            Icons.school,
+            'School Info',
+            () => _navigate(context, SchoolInfoPage()),
+          ),
+          sidebarItem(
+            context,
+            Icons.message,
+            'Chat With Students',
+            () => _navigate(context, const TeacherChatStudentListPage()),
+          ),
 
-          sidebarItem(context, Icons.report, 'Complaint', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => TeacherComplaintListPage()),
-            );
-          }),
-
-          sidebarItem(context, Icons.payment, 'Payments', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => PaymentTeacherScreen()),
-            );
-          }),
-          sidebarItem(context, Icons.calendar_month, 'My Attendance', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => TeacherAttendanceScreen()),
-            );
-          }),
-
-          sidebarItem(context, Icons.school, 'School Info', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => SchoolInfoPage()),
-            );
-          }),
-          sidebarItem(context, Icons.message, 'Chat With Students', () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const TeacherChatStudentListPage()),
-            );
-          }),
-          Divider(),
+          const Divider(),
 
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),
@@ -254,55 +268,20 @@ class _TeacherSidebarMenuState extends State<TeacherSidebarMenu> {
             onTap: () {
               showDialog(
                 context: context,
-                builder: (context) => AlertDialog(
+                builder: (_) => AlertDialog(
                   title: const Text("Logout"),
                   content: const Text("Are you sure you want to logout?"),
                   actions: [
                     TextButton(
-                      child: const Text("Cancel"),
                       onPressed: () => Navigator.pop(context),
+                      child: const Text("Cancel"),
                     ),
                     TextButton(
-                      child: const Text("Logout"),
                       onPressed: () async {
-                        final prefs = await SharedPreferences.getInstance();
-                        final token = prefs.getString('token') ?? '';
-
-                        final response = await http.post(
-                          Uri.parse('https://schoolerp.edusathi.in/api/logout'),
-                          headers: {
-                            'Authorization': 'Bearer $token',
-                            'Accept': 'application/json',
-                          },
-                        );
-
-                        if (response.statusCode == 200) {
-                          final data = jsonDecode(response.body);
-                          if (data['status'] == true ||
-                              data['message'] == 'Logged out') {
-                            await prefs.clear();
-                            Navigator.pushAndRemoveUntil(
-                              context,
-                              MaterialPageRoute(builder: (_) => LoginPage()),
-                              (route) => false,
-                            );
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  "Logout failed: ${data['message']}",
-                                ),
-                              ),
-                            );
-                          }
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text("Logout failed. Please try again."),
-                            ),
-                          );
-                        }
+                        Navigator.pop(context);
+                        await _logout(context);
                       },
+                      child: const Text("Logout"),
                     ),
                   ],
                 ),
@@ -318,13 +297,12 @@ class _TeacherSidebarMenuState extends State<TeacherSidebarMenu> {
     BuildContext context,
     IconData icon,
     String title,
-
     VoidCallback onTap,
   ) {
     return ListTile(
       leading: Icon(icon),
-      visualDensity: VisualDensity(vertical: -4),
       title: Text(title),
+      visualDensity: const VisualDensity(vertical: -3),
       onTap: onTap,
     );
   }

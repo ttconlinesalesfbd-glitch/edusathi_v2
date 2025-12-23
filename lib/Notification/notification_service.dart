@@ -6,41 +6,88 @@ class NotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
-  static void initialize(BuildContext context) {
-    const AndroidInitializationSettings initializationSettingsAndroid =
+  static const AndroidNotificationChannel _channel =
+      AndroidNotificationChannel(
+    'edusathi_channel', // 🔒 fixed channel id
+    'EduSathi Notifications',
+    description: 'Notifications for EduSathi app',
+    importance: Importance.high,
+  );
+
+  /// 🔹 INITIALIZE (Android + iOS)
+  static Future<void> initialize(BuildContext context) async {
+    // 🔹 Android init
+    const androidInit =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    const InitializationSettings initializationSettings =
-        InitializationSettings(android: initializationSettingsAndroid);
+    // 🔹 iOS init
+    const iosInit = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
 
-    _notificationsPlugin.initialize(
-      initializationSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) async {
-        // Handle notification tap here
-        print("🔔 Notification clicked with payload: ${response.payload}");
+    const initSettings = InitializationSettings(
+      android: androidInit,
+      iOS: iosInit,
+    );
+
+    // 🔹 Create Android notification channel
+    await _notificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(_channel);
+
+    await _notificationsPlugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        debugPrint(
+          "🔔 Notification tapped | payload: ${response.payload}",
+        );
+        // 👉 navigation can be added later safely
       },
+    );
+
+    // 🔹 iOS permission request (IMPORTANT)
+    await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
     );
   }
 
-  static void display(RemoteMessage message) async {
+  /// 🔹 SHOW NOTIFICATION (Foreground)
+  static Future<void> display(RemoteMessage message) async {
     try {
-      const NotificationDetails notificationDetails = NotificationDetails(
+      final notification = message.notification;
+      if (notification == null) return;
+
+      final details = NotificationDetails(
         android: AndroidNotificationDetails(
-          'channel_id',
-          'EduSathi Notifications',
+          _channel.id,
+          _channel.name,
+          channelDescription: _channel.description,
           importance: Importance.max,
           priority: Priority.high,
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
         ),
       );
 
       await _notificationsPlugin.show(
         DateTime.now().millisecondsSinceEpoch ~/ 1000,
-        message.notification?.title ?? 'No Title',
-        message.notification?.body ?? 'No body',
-        notificationDetails,
+        notification.title ?? 'EduSathi',
+        notification.body ?? '',
+        details,
+        payload: message.data.isNotEmpty
+            ? message.data.toString()
+            : null,
       );
     } catch (e) {
-      print("❌ Error displaying notification: $e");
+      debugPrint("❌ Notification display error: $e");
     }
   }
 }

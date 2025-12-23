@@ -1,8 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:edusathi_v2/auth_helper.dart';
 
 class TeacherAttendanceScreen extends StatefulWidget {
   const TeacherAttendanceScreen({super.key});
@@ -14,7 +13,7 @@ class TeacherAttendanceScreen extends StatefulWidget {
 
 class _TeacherAttendanceScreenState extends State<TeacherAttendanceScreen> {
   DateTime _focusedMonth = DateTime.now();
-  Map<String, String> _attendanceMap = {}; // 'yyyy-MM-dd': status
+  Map<String, String> _attendanceMap = {}; // yyyy-MM-dd : status
   bool _isLoading = false;
 
   @override
@@ -23,29 +22,95 @@ class _TeacherAttendanceScreenState extends State<TeacherAttendanceScreen> {
     _fetchAttendance();
   }
 
+  Map<String, int> _calculateTotals() {
+    int present = 0;
+    int absent = 0;
+    int leave = 0;
+    int holiday = 0;
+    int halfDay = 0;
+    int notMarked = 0;
+
+    for (final status in _attendanceMap.values) {
+      switch (status) {
+        case 'Present':
+          present++;
+          break;
+        case 'Absent':
+          absent++;
+          break;
+        case 'Leave':
+          leave++;
+          break;
+        case 'Holiday':
+          holiday++;
+          break;
+        case 'HalfDay':
+          halfDay++;
+          break;
+        default:
+          notMarked++;
+      }
+    }
+
+    return {
+      'Present': present,
+      'Absent': absent,
+      'Leave': leave,
+      'Holiday': holiday,
+      'HalfDay': halfDay,
+      'Not Marked': notMarked,
+    };
+  }
+
+  // ====================================================
+  // 🔐 SAFE FETCH ATTENDANCE (iOS + Android)
+  // ====================================================
   Future<void> _fetchAttendance() async {
+    if (!mounted) return;
+
     setState(() => _isLoading = true);
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
 
-    final formattedMonth = DateFormat('yyyy-MM').format(_focusedMonth);
-    final url = Uri.parse('https://schoolerp.edusathi.in/api/teacher/attendance');
+    try {
+      final formattedMonth = DateFormat('yyyy-MM').format(_focusedMonth);
 
-    final response = await http.post(
-      url,
-      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-      body: {'Month': formattedMonth},
-    );
+      final res = await AuthHelper.post(
+        context,
+        'https://schoolerp.edusathi.in/api/teacher/attendance',
+        body: {'Month': formattedMonth},
+      );
 
-    if (response.statusCode == 200) {
-      final List data = json.decode(response.body);
-      setState(() {
-        _attendanceMap = {for (var item in data) item['date']: item['status']};
-        _isLoading = false;
-      });
-    } else {
+      // AuthHelper already handles 401 + logout
+      if (res == null) return;
+
+      debugPrint("📥 TEACHER ATTENDANCE STATUS: ${res.statusCode}");
+      debugPrint("📥 TEACHER ATTENDANCE BODY: ${res.body}");
+
+      if (res.statusCode == 200) {
+        final List data = jsonDecode(res.body);
+
+        if (!mounted) return;
+        setState(() {
+          _attendanceMap = {
+            for (final item in data)
+              item['date'].toString(): item['status'].toString(),
+          };
+        });
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load attendance")),
+        );
+      }
+    } catch (e) {
+      debugPrint("🚨 TEACHER ATTENDANCE ERROR: $e");
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Something went wrong")));
+    } finally {
+      if (!mounted) return;
       setState(() => _isLoading = false);
-      print('❌ Failed to load teacher attendance');
     }
   }
 
@@ -56,7 +121,7 @@ class _TeacherAttendanceScreenState extends State<TeacherAttendanceScreen> {
     final firstOfMonth = DateTime(year, month, 1);
     final daysInMonth = DateTime(year, month + 1, 0).day;
     final startWeekday = firstOfMonth.weekday % 7;
-
+    final totals = _calculateTotals();
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -73,6 +138,7 @@ class _TeacherAttendanceScreenState extends State<TeacherAttendanceScreen> {
               const SizedBox(height: 12),
               _buildCalendarContainer(year, month, daysInMonth, startWeekday),
               const SizedBox(height: 10),
+              _buildSummaryBox(totals),
             ],
           ),
           if (_isLoading)
@@ -89,6 +155,77 @@ class _TeacherAttendanceScreenState extends State<TeacherAttendanceScreen> {
     );
   }
 
+  // ====================================================
+  // 📊 SUMMARY BOX (UNCHANGED)
+  // ====================================================
+  Widget _buildSummaryBox(Map<String, int> totals) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Attendance Summary',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.deepPurple,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildStatusItem('Present', totals['Present']!, Colors.green),
+              _buildStatusItem('Absent', totals['Absent']!, Colors.red),
+              _buildStatusItem('Leave', totals['Leave']!, Colors.orange),
+              _buildStatusItem('Holiday', totals['Holiday']!, Colors.black),
+              _buildStatusItem('Half Day', totals['HalfDay']!, Colors.blue),
+              _buildStatusItem(
+                'Not Marked',
+                totals['Not Marked']!,
+                Colors.grey,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusItem(String label, int count, Color color) {
+    return Column(
+      children: [
+        CircleAvatar(radius: 6, backgroundColor: color),
+        const SizedBox(height: 4),
+        Text(
+          '$count',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 11, color: Colors.black54),
+        ),
+      ],
+    );
+  }
+
+  // ====================================================
+  // 📅 CALENDAR UI (UNCHANGED)
+  // ====================================================
   Widget _buildCalendarContainer(
     int year,
     int month,
@@ -126,8 +263,8 @@ class _TeacherAttendanceScreenState extends State<TeacherAttendanceScreen> {
                         _focusedMonth.year,
                         _focusedMonth.month - 1,
                       );
-                      _fetchAttendance();
                     });
+                    _fetchAttendance();
                   },
                 ),
                 Text(
@@ -146,8 +283,8 @@ class _TeacherAttendanceScreenState extends State<TeacherAttendanceScreen> {
                         _focusedMonth.year,
                         _focusedMonth.month + 1,
                       );
-                      _fetchAttendance();
                     });
+                    _fetchAttendance();
                   },
                 ),
               ],
@@ -206,6 +343,12 @@ class _TeacherAttendanceScreenState extends State<TeacherAttendanceScreen> {
                     break;
                   case 'Leave':
                     dotColor = Colors.orange;
+                    break;
+                  case 'Holiday':
+                    dotColor = Colors.black;
+                    break;
+                  case 'HalfDay':
+                    dotColor = Colors.blue;
                     break;
                   default:
                     dotColor = Colors.grey;

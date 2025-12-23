@@ -1,11 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:open_file/open_file.dart';
+import 'package:edusathi_v2/auth_helper.dart';
 
 class PaymentPage extends StatefulWidget {
   const PaymentPage({super.key});
@@ -25,83 +25,120 @@ class _PaymentPageState extends State<PaymentPage> {
     fetchPayments();
   }
 
+  // ---------------- FETCH PAYMENTS ----------------
   Future<void> fetchPayments() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+    if (!mounted) return;
 
-    final response = await http.post(
-      Uri.parse(apiUrl),
-      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-    );
+    setState(() => isLoading = true);
 
-    print("📥 Payment API Response: ${response.body}");
+    try {
+      final response = await AuthHelper.post(context, apiUrl);
 
-    if (response.statusCode == 200) {
-      setState(() {
-        payments = jsonDecode(response.body);
-        isLoading = false;
-      });
-    } else {
+      // 🔐 token invalid → auto logout already handled
+      if (response == null) {
+        if (!mounted) return;
+        setState(() {
+          payments = [];
+          isLoading = false;
+        });
+        return;
+      }
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+
+        if (!mounted) return;
+        setState(() {
+          payments = decoded is List ? decoded : [];
+          isLoading = false;
+        });
+      } else {
+        if (!mounted) return;
+        setState(() {
+          payments = [];
+          isLoading = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load payment records")),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         payments = [];
         isLoading = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to load payment records")),
-      );
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Network error: $e")));
     }
   }
 
+  // ---------------- DOWNLOAD RECEIPT ----------------
+  Future<void> downloadReceipt(dynamic paymentId) async {
+    try {
+      final response = await AuthHelper.post(
+        context,
+        'https://schoolerp.edusathi.in/api/student/receipt',
+        body: {'payment_id': paymentId.toString()},
+      );
 
+      if (response == null) return;
 
-Future<void> downloadReceipt(dynamic paymentId) async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+      if (response.statusCode != 200) {
+        throw Exception("Failed to fetch receipt");
+      }
 
-    final response = await http.post(
-      Uri.parse('https://schoolerp.edusathi.in/api/student/receipt'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-      body: {'payment_id': paymentId.toString()},
-    );
+      final data = jsonDecode(response.body);
 
-    final data = jsonDecode(response.body);
-    if (response.statusCode == 200 && data['status'] == true) {
+      if (data['status'] != true || data['url'] == null) {
+        throw Exception(data['message'] ?? 'Invalid receipt response');
+      }
+
       final url = data['url'];
-      final filename = url.split('/').last;
+      final fileName = url.split('/').last;
 
-      // Ask for permission (optional, for older Androids)
-      await Permission.storage.request();
+      // 🔒 Android permission only
+      if (Platform.isAndroid) {
+        final status = await Permission.storage.request();
+        if (!status.isGranted) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Storage permission denied")),
+          );
+          return;
+        }
+      }
 
-      final dir = await getApplicationDocumentsDirectory(); // safer directory
-      final filePath = '${dir.path}/$filename';
+      final dir = await getApplicationDocumentsDirectory();
+      final filePath = '${dir.path}/$fileName';
 
       final pdfResponse = await http.get(Uri.parse(url));
-      final file = File(filePath);
-      await file.writeAsBytes(pdfResponse.bodyBytes);
+      if (pdfResponse.statusCode != 200) {
+        throw Exception("Failed to download file");
+      }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Receipt downloaded: $filename')),
-      );
+      final file = File(filePath);
+      await file.writeAsBytes(pdfResponse.bodyBytes, flush: true);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Receipt downloaded: $fileName")));
 
       await OpenFile.open(filePath);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(data['message'] ?? 'Download failed')),
-      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Download error: $e")));
     }
-  } catch (e) {
-    print("❌ Error downloading receipt: $e");
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Error downloading receipt')),
-    );
   }
-}
 
-
+  // ---------------- UI (UNCHANGED) ----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -109,7 +146,7 @@ Future<void> downloadReceipt(dynamic paymentId) async {
         title: const Text("My Payments", style: TextStyle(color: Colors.white)),
         backgroundColor: Colors.deepPurple,
         centerTitle: true,
-        iconTheme: IconThemeData(color: Colors.white),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: isLoading
           ? const Center(
@@ -164,7 +201,6 @@ Future<void> downloadReceipt(dynamic paymentId) async {
                                   Text(
                                     "📅 ${payment['Date']}",
                                     style: const TextStyle(
-                                      color: Colors.black,
                                       fontWeight: FontWeight.bold,
                                       fontSize: 18,
                                     ),
@@ -194,7 +230,6 @@ Future<void> downloadReceipt(dynamic paymentId) async {
                                     "Remark",
                                     payment['Remark'] ?? '-',
                                   ),
-                                  const SizedBox(height: 8),
                                 ],
                               ),
                             ),
@@ -206,9 +241,7 @@ Future<void> downloadReceipt(dynamic paymentId) async {
                                   Icons.download,
                                   color: Colors.deepPurple,
                                 ),
-                                onPressed: () {
-                                  downloadReceipt(payment['id']);
-                                },
+                                onPressed: () => downloadReceipt(payment['id']),
                               ),
                             ),
                           ],

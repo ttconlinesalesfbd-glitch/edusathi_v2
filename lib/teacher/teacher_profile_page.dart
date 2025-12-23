@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:edusathi_v2/auth_helper.dart';
 import 'package:edusathi_v2/changePasswordPage.dart';
-import 'package:http/http.dart' as http;
+
 
 class TeacherProfilePage extends StatefulWidget {
   const TeacherProfilePage({super.key});
@@ -33,8 +34,11 @@ class _TeacherProfilePageState extends State<TeacherProfilePage> {
     fetchTeacherProfile();
   }
 
+  // ---------------- LOAD LOCAL DATA ----------------
   Future<void> loadLocalInfo() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
     setState(() {
       name = prefs.getString('teacher_name') ?? '';
       className = prefs.getString('teacher_class') ?? '';
@@ -43,37 +47,42 @@ class _TeacherProfilePageState extends State<TeacherProfilePage> {
     });
   }
 
-  Future<void> fetchTeacherProfile() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
-
-    final response = await http.post(
-      Uri.parse('https://schoolerp.edusathi.in/api/teacher/profile'),
-      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+  // ---------------- FETCH PROFILE ----------------
+ Future<void> fetchTeacherProfile() async {
+  try {
+    final response = await AuthHelper.post(
+      context,
+      'https://schoolerp.edusathi.in/api/teacher/profile',
     );
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      setState(() {
-        gender = data['Gender'] ?? '';
-        employeeId = data['EmployeeId'] ?? '';
-        relativeName = data['RelativeName'] ?? '';
-        dob = data['DOB'] ?? '';
-        doj = data['DOJ'] ?? '';
-        contact = data['ContactNo'].toString();
-        qualification = data['EmpQualification'] ?? '';
-        address = data['Address'] ?? '';
-        isLoading = false;
-      });
-    } else {
-      print("❌ Error loading teacher profile: ${response.statusCode}");
+    // Token expired → AuthHelper already logged out
+    if (response == null) return;
 
-      setState(() {
-        setState(() => isLoading = false);
-      });
-    }
+    if (!mounted) return;
+
+    final data = jsonDecode(response.body);
+
+    setState(() {
+      gender = data['Gender'] ?? '';
+      employeeId = data['EmployeeId'] ?? '';
+      relativeName = data['RelativeName'] ?? '';
+      dob = data['DOB'] ?? '';
+      doj = data['DOJ'] ?? '';
+      contact = data['ContactNo']?.toString() ?? '';
+      qualification = data['EmpQualification'] ?? '';
+      address = data['Address'] ?? '';
+      isLoading = false;
+    });
+  } catch (e) {
+    if (!mounted) return;
+    setState(() => isLoading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Failed to load profile")),
+    );
   }
+}
 
+  // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -104,8 +113,9 @@ class _TeacherProfilePageState extends State<TeacherProfilePage> {
                             radius: 45,
                             backgroundImage: photo.isNotEmpty
                                 ? NetworkImage(photo)
-                                : const AssetImage('assets/images/logo_new.png')
-                                      as ImageProvider,
+                                : const AssetImage(
+                                    'assets/images/logo_new.png',
+                                  ) as ImageProvider,
                           ),
                           const SizedBox(width: 20),
                           Expanded(
@@ -120,8 +130,8 @@ class _TeacherProfilePageState extends State<TeacherProfilePage> {
                                   ),
                                 ),
                                 const SizedBox(height: 5),
-                                Text("Class Teacher"),
-                                Text(" $className - $section"),
+                                const Text("Class Teacher"),
+                                Text("$className - $section"),
                               ],
                             ),
                           ),
@@ -130,20 +140,12 @@ class _TeacherProfilePageState extends State<TeacherProfilePage> {
                       const Divider(height: 30, thickness: 1),
 
                       buildInfoRow(Icons.badge, "Employee ID", employeeId),
-                      buildInfoRow(
-                        Icons.person_outline,
-                        "Relative Name",
-                        relativeName,
-                      ),
+                      buildInfoRow(Icons.person_outline, "Relative Name", relativeName),
                       buildInfoRow(Icons.male, "Gender", gender),
                       buildInfoRow(Icons.phone, "Contact No.", contact),
                       buildInfoRow(Icons.cake, "Date of Birth", dob),
                       buildInfoRow(Icons.calendar_month, "Joining Date", doj),
-                      buildInfoRow(
-                        Icons.school,
-                        "Qualification",
-                        qualification,
-                      ),
+                      buildInfoRow(Icons.school, "Qualification", qualification),
                       buildInfoRow(Icons.location_on, "Address", address),
 
                       const SizedBox(height: 20),
@@ -185,7 +187,7 @@ class _TeacherProfilePageState extends State<TeacherProfilePage> {
           Icon(icon, color: Colors.deepPurple),
           const SizedBox(width: 10),
           Text("$title: ", style: const TextStyle(fontWeight: FontWeight.bold)),
-          Expanded(child: Text(value, overflow: TextOverflow.visible)),
+          Expanded(child: Text(value)),
         ],
       ),
     );

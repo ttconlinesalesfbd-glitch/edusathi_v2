@@ -1,55 +1,68 @@
-import 'package:edusathi_v2/homework/homework_detail_page.dart';
-import 'package:edusathi_v2/homework/homework_page.dart';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart'; // Add this package
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
-import 'dart:io';
-// import 'package:permission_handler/permission_handler.dart';
 import 'package:open_file/open_file.dart';
+import 'package:edusathi_v2/homework/homework_detail_page.dart';
+import 'package:edusathi_v2/homework/homework_page.dart';
 
+bool _isDownloading = false; // 🔒 download lock (logic only)
 
-// Function to format the date
+// ====================================================
+// 📅 DATE FORMAT (SAFE)
+// ====================================================
 String formatDate(String? inputDate) {
   if (inputDate == null || inputDate.isEmpty) return '';
   try {
-    final date = DateTime.parse(inputDate); // expects yyyy-MM-dd
-    return DateFormat('dd-MM-yyyy').format(date);
-  } catch (e) {
-    return inputDate; // fallback to raw string
+    return DateFormat('dd-MM-yyyy').format(DateTime.parse(inputDate));
+  } catch (_) {
+    return inputDate;
   }
 }
 
+// ====================================================
+// 📥 SAFE FILE DOWNLOAD (iOS + Android)
+// ====================================================
 Future<void> downloadFile(BuildContext context, String filePath) async {
+  if (_isDownloading) return;
+  _isDownloading = true;
+
   try {
     final fullUrl = filePath.startsWith('http')
         ? filePath
         : 'https://schoolerp.edusathi.in/$filePath';
 
     final response = await http.get(Uri.parse(fullUrl));
+
     if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
-      throw Exception("Failed to download file.");
+      throw Exception("Download failed");
     }
 
-    // ✅ Use app-specific storage
     final dir = await getApplicationDocumentsDirectory();
-    final fileName = filePath.split('/').last;
+    final fileName = fullUrl.split('/').last;
     final file = File('${dir.path}/$fileName');
 
     await file.writeAsBytes(response.bodyBytes, flush: true);
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text("Downloaded to ${file.path}")));
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(
+      SnackBar(content: Text("Downloaded to ${file.path}")),
+    );
 
     await OpenFile.open(file.path);
-  } catch (e) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text("Download error: $e")));
+  } catch (_) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text("Download failed")),
+    );
+  } finally {
+    _isDownloading = false;
   }
 }
 
+// ====================================================
+// 📝 RECENT HOMEWORKS WIDGET (UI UNCHANGED)
+// ====================================================
 Widget buildRecentHomeworks(
   BuildContext context,
   List<Map<String, dynamic>> homeworks,
@@ -57,7 +70,7 @@ Widget buildRecentHomeworks(
   final limitedHomeworks = homeworks.take(3).toList();
 
   return Container(
-    padding: EdgeInsets.all(8),
+    padding: const EdgeInsets.all(8),
     decoration: BoxDecoration(
       color: Colors.white,
       borderRadius: BorderRadius.circular(16),
@@ -65,7 +78,7 @@ Widget buildRecentHomeworks(
         BoxShadow(
           color: Colors.grey.withOpacity(0.2),
           blurRadius: 6,
-          offset: Offset(0, 3),
+          offset: const Offset(0, 3),
         ),
       ],
     ),
@@ -75,7 +88,7 @@ Widget buildRecentHomeworks(
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
+            const Text(
               '📝 Recent Homeworks',
               style: TextStyle(
                 fontSize: 18,
@@ -87,56 +100,55 @@ Widget buildRecentHomeworks(
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => HomeworkPage()),
+                  MaterialPageRoute(builder: (_) => const HomeworkPage()),
                 );
               },
-              child: Text("View All"),
+              child: const Text("View All"),
             ),
           ],
         ),
         limitedHomeworks.isEmpty
-            ? Text("No homeworks available.")
+            ? const Text("No homeworks available.")
             : ListView.builder(
                 shrinkWrap: true,
-                physics: NeverScrollableScrollPhysics(),
+                physics: const NeverScrollableScrollPhysics(),
                 itemCount: limitedHomeworks.length,
                 itemBuilder: (context, index) {
                   final hw = limitedHomeworks[index];
+
                   return ListTile(
                     onTap: () {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => HomeworkDetailPage(homework: hw),
+                          builder: (_) =>
+                              HomeworkDetailPage(homework: hw),
                         ),
                       );
                     },
-                    leading: Icon(Icons.book, color: Colors.deepPurple),
+                    leading: const Icon(
+                      Icons.book,
+                      color: Colors.deepPurple,
+                    ),
                     title: Text(
                       hw['HomeworkTitle'] ?? '',
-                      style: TextStyle(fontSize: 14),
+                      style: const TextStyle(fontSize: 14),
                     ),
                     subtitle: Text(
                       'Submission: ${formatDate(hw['SubmissionDate'])}',
-                      style: TextStyle(fontSize: 12),
+                      style: const TextStyle(fontSize: 12),
                     ),
                     trailing: hw['Attachment'] != null
                         ? IconButton(
-                            icon: Icon(
+                            icon: const Icon(
                               Icons.download,
                               color: Colors.deepPurple,
                             ),
                             onPressed: () {
-                              String fileUrl = hw['Attachment'];
-
-                              if (!fileUrl.startsWith('http')) {
-                                fileUrl = 'https://schoolerp.edusathi.in/$fileUrl';
-                              }
-
-                              downloadFile(context, fileUrl);
+                              downloadFile(context, hw['Attachment']);
                             },
                           )
-                        : SizedBox.shrink(),
+                        : const SizedBox.shrink(),
                   );
                 },
               ),

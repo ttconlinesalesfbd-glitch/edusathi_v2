@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:edusathi_v2/auth_helper.dart';
 
 class StudentResultPage extends StatefulWidget {
   const StudentResultPage({Key? key}) : super(key: key);
@@ -15,6 +14,7 @@ class _StudentResultPageState extends State<StudentResultPage> {
   List exams = [];
   List results = [];
   bool isLoading = false;
+  bool isExamLoading = true;
 
   @override
   void initState() {
@@ -22,72 +22,106 @@ class _StudentResultPageState extends State<StudentResultPage> {
     fetchExams();
   }
 
+  // ====================================================
+  // 🔹 FETCH EXAMS (SAFE)
+  // ====================================================
   Future<void> fetchExams() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+    if (!mounted) return;
+
+    setState(() => isExamLoading = true);
 
     try {
-      final response = await http.post(
-        Uri.parse('https://schoolerp.edusathi.in/api/get_exam'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
+      final res = await AuthHelper.post(
+        context,
+        'https://schoolerp.edusathi.in/api/get_exam',
       );
 
-      if (response.statusCode == 200) {
+      if (res == null) return;
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+
+        List examList = [];
+
+        if (decoded is List) {
+          examList = decoded;
+        } else if (decoded is Map && decoded['data'] is List) {
+          examList = decoded['data'];
+        }
+
+        if (!mounted) return;
         setState(() {
-          exams = json.decode(response.body);
+          exams = examList;
+          isExamLoading = false;
         });
+        debugPrint("📦 Exams length: ${exams.length}");
+        debugPrint("📦 Exams data: $exams");
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Failed to load exams: ${response.statusCode}"),
-          ),
-        );
+        _showError("Failed to load exams");
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      _showError("Something went wrong");
     }
   }
 
+  // ====================================================
+  // 🔹 FETCH RESULTS (SAFE)
+  // ====================================================
   Future<void> fetchResults() async {
     if (selectedExamId == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Please select an exam")));
+      _showSnack("Please select an exam");
       return;
     }
 
+    if (!mounted) return;
     setState(() => isLoading = true);
 
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
-
-    final response = await http.post(
-      Uri.parse('https://schoolerp.edusathi.in/api/teacher/result'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({'ExamId': selectedExamId}),
-    );
-
-    if (response.statusCode == 200) {
-      setState(() {
-        results = json.decode(response.body);
-      });
-    } else {
-      ScaffoldMessenger.of(
+    try {
+      final res = await AuthHelper.post(
         context,
-      ).showSnackBar(const SnackBar(content: Text("Failed to fetch results")));
-    }
+        'https://schoolerp.edusathi.in/api/teacher/result',
+        body: {'ExamId': selectedExamId},
+      );
 
-    setState(() => isLoading = false);
+      if (res == null) return;
+
+      if (res.statusCode == 200) {
+        if (!mounted) return;
+
+        setState(() {
+          results = jsonDecode(res.body);
+        });
+      } else {
+        _showSnack("Failed to fetch results");
+      }
+    } catch (e) {
+      _showSnack("Something went wrong");
+    } finally {
+      if (mounted) {
+        setState(() => isLoading = false);
+      }
+    }
   }
 
+  void _showError(String msg) {
+    if (!mounted) return;
+
+    setState(() {
+      isExamLoading = false;
+      isLoading = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // ====================================================
+  // 🧱 UI (UNCHANGED)
+  // ====================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -101,10 +135,10 @@ class _StudentResultPageState extends State<StudentResultPage> {
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Padding(
-        padding: const EdgeInsets.all(12.0),
+        padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            // Dropdown for Exam selection
+            // 🔽 Exam Dropdown
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
@@ -130,15 +164,12 @@ class _StudentResultPageState extends State<StudentResultPage> {
                 ),
               ),
             ),
+
             const SizedBox(height: 10),
 
-            // Loader
             if (isLoading)
-              const Center(
-                child: CircularProgressIndicator(color: Colors.deepPurple),
-              ),
+              const CircularProgressIndicator(color: Colors.deepPurple),
 
-            // Results
             if (!isLoading && results.isNotEmpty)
               Expanded(
                 child: ListView.builder(
@@ -146,6 +177,7 @@ class _StudentResultPageState extends State<StudentResultPage> {
                   itemBuilder: (context, index) {
                     final student = results[index];
                     final marks = student['Marks'] as List;
+
                     double totalMarks = 0;
                     double obtainedMarks = 0;
 
@@ -157,7 +189,7 @@ class _StudentResultPageState extends State<StudentResultPage> {
                       }
                     }
 
-                    double percentage = totalMarks > 0
+                    final percentage = totalMarks > 0
                         ? (obtainedMarks / totalMarks) * 100
                         : 0;
 
@@ -168,7 +200,7 @@ class _StudentResultPageState extends State<StudentResultPage> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.all(12.0),
+                        padding: const EdgeInsets.all(12),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -181,19 +213,14 @@ class _StudentResultPageState extends State<StudentResultPage> {
                             ),
                             Text(
                               "F Name: ${student['FatherName']}",
-                              style: const TextStyle(
-                                color: Colors.black87,
-                                fontSize: 14,
-                              ),
+                              style: const TextStyle(fontSize: 14),
                             ),
                             const SizedBox(height: 10),
 
-                            // Subject table header (MODIFIED)
                             Row(
                               children: const [
-                                // Subject column will take up most of the space
                                 Expanded(
-                                  flex: 3, // Increased relative size
+                                  flex: 3,
                                   child: Text(
                                     "Subject",
                                     style: TextStyle(
@@ -201,29 +228,23 @@ class _StudentResultPageState extends State<StudentResultPage> {
                                     ),
                                   ),
                                 ),
-                                // Added a Spacer to separate Subject from Total
                                 Spacer(),
-                                // Total and Obt columns with fixed space
                                 SizedBox(
                                   width: 40,
                                   child: Text(
                                     "Total",
-                                    textAlign: TextAlign
-                                        .right, // Align text right for numerical value
+                                    textAlign: TextAlign.right,
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                 ),
-                                SizedBox(
-                                  width: 15,
-                                ), // Reduced space between Total and Obt
+                                SizedBox(width: 15),
                                 SizedBox(
                                   width: 40,
                                   child: Text(
                                     "Obt",
-                                    textAlign: TextAlign
-                                        .right, // Align text right for numerical value
+                                    textAlign: TextAlign.right,
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -232,63 +253,58 @@ class _StudentResultPageState extends State<StudentResultPage> {
                               ],
                             ),
                             const Divider(),
+
                             Column(
                               children: marks.map((m) {
-                                return Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 2,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      // Subject column data (MODIFIED)
-                                      Expanded(
-                                        flex:
-                                            3, // Corresponds to the header's flex: 3
-                                        child: Text(m['Subject']),
+                                return Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 3,
+                                      child: Text(m['Subject']),
+                                    ),
+                                    const Spacer(),
+                                    SizedBox(
+                                      width: 40,
+                                      child: Text(
+                                        m['TotalMark'],
+                                        textAlign: TextAlign.right,
                                       ),
-                                      // Added a Spacer
-                                      const Spacer(),
-                                      // Total Mark data (MODIFIED)
-                                      SizedBox(
-                                        width: 40,
-                                        child: Text(
-                                          m['TotalMark'],
-                                          textAlign: TextAlign.right,
+                                    ),
+                                    const SizedBox(width: 15),
+                                    SizedBox(
+                                      width: 40,
+                                      child: Text(
+                                        m['IsPresent'] == "Yes"
+                                            ? m['GetMark']
+                                            : "Ab",
+                                        textAlign: TextAlign.right,
+                                        style: TextStyle(
+                                          color: m['IsPresent'] == "Yes"
+                                              ? Colors.black
+                                              : Colors.red,
                                         ),
                                       ),
-                                      const SizedBox(
-                                        width: 15,
-                                      ), 
-                                      SizedBox(
-                                        width: 40,
-                                        child: Text(
-                                          m['IsPresent'] == "Yes"
-                                              ? m['GetMark']
-                                              : "Ab",
-                                          textAlign: TextAlign.right,
-                                          style: TextStyle(
-                                            color: m['IsPresent'] == "Yes"
-                                                ? Colors.black
-                                                : Colors.red,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 );
                               }).toList(),
                             ),
+
                             const Divider(),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(
                                   "Total: ${obtainedMarks.toInt()} / ${totalMarks.toInt()}",
-                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                                 Text(
                                   "Percentage: ${percentage.toStringAsFixed(2)}%",
-                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                               ],
                             ),

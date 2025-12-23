@@ -27,221 +27,186 @@ class _TeacherAddHomeworkPageState extends State<TeacherAddHomeworkPage> {
   File? selectedFile;
 
   bool isLoading = false;
+  bool _isSubmitting = false; // 🔒 prevent double submit
 
   @override
   void initState() {
     super.initState();
+    assignDate = DateTime.now();
+    submissionDate = DateTime.now();
 
-    final today = DateTime.now();
-    assignDate = today;
-    submissionDate = today;
     if (widget.homeworkToEdit != null) {
-      // Homework details fetch karne se pehle classes aur sections ko await karein
-      _loadEditData();
+      _loadEditFlow();
     } else {
-      // Naya homework add karne ke liye
       fetchClasses();
     }
   }
 
-  Future<void> _loadEditData() async {
+  // ============================
+  // 🔄 EDIT MODE SEQUENTIAL LOAD
+  // ============================
+  Future<void> _loadEditFlow() async {
     setState(() => isLoading = true);
     await fetchClasses();
     await fetchHomeworkDetails(widget.homeworkToEdit!['id']);
-    setState(() => isLoading = false);
+    if (mounted) setState(() => isLoading = false);
   }
 
-  // --- Utility Functions ---
-
-  Future<void> fetchClassesAndSections() async {
-    setState(() => isLoading = true);
-    await fetchClasses();
-    if (selectedClassId != null) {
-      await fetchSections(selectedClassId!);
-    }
-    setState(() => isLoading = false);
-  }
-
+  // ============================
+  // 📚 FETCH CLASSES
+  // ============================
   Future<void> fetchClasses() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+    final token = prefs.getString('auth_token') ?? '';
 
-    final response = await http.post(
+    final res = await http.post(
       Uri.parse('https://schoolerp.edusathi.in/api/get_class'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
+      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
     );
 
-    if (response.statusCode == 200) {
+    if (res.statusCode == 200 && mounted) {
       setState(() {
-        classes = jsonDecode(response.body);
+        classes = jsonDecode(res.body);
       });
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to fetch classes")),
-        );
-      }
     }
   }
 
+  // ============================
+  // 📘 FETCH SECTIONS
+  // ============================
   Future<void> fetchSections(int classId) async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+    final token = prefs.getString('auth_token') ?? '';
 
-    final response = await http.post(
+    final res = await http.post(
       Uri.parse('https://schoolerp.edusathi.in/api/get_section'),
       headers: {
         'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
         'Accept': 'application/json',
+        'Content-Type': 'application/json',
       },
       body: jsonEncode({'ClassId': classId}),
     );
 
-    if (response.statusCode == 200) {
+    if (res.statusCode == 200 && mounted) {
       setState(() {
-        sections = jsonDecode(response.body);
-        selectedSectionId = null; // Reset section on class change
+        sections = jsonDecode(res.body);
+        selectedSectionId = null;
       });
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to fetch sections")),
-        );
-      }
     }
   }
 
-  // --- New `fetchHomeworkDetails` Function ---
+  // ============================
+  // ✏️ FETCH HOMEWORK DETAILS
+  // ============================
   Future<void> fetchHomeworkDetails(int homeworkId) async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+    final token = prefs.getString('auth_token') ?? '';
 
-    final response = await http.post(
+    final res = await http.post(
       Uri.parse('https://schoolerp.edusathi.in/api/teacher/homework/edit'),
       headers: {
         'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
         'Accept': 'application/json',
+        'Content-Type': 'application/json',
       },
       body: jsonEncode({'HomeworkId': homeworkId}),
     );
 
-    if (response.statusCode == 200) {
-      final Map<String, dynamic> data = jsonDecode(response.body);
+    if (res.statusCode != 200) return;
 
-      // Title aur Description ko set karein
-      setState(() {
-        _titleController.text = data['HomeworkTitle'] ?? '';
-        _descriptionController.text = data['Remark'] ?? '';
-        assignDate = DateTime.tryParse(data['WorkDate'] ?? '');
-        submissionDate = DateTime.tryParse(data['SubmissionDate'] ?? '');
-      });
+    final data = jsonDecode(res.body);
 
-      // Class aur Section ID ko check aur set karein
-      final classId = int.tryParse(data['Class'] ?? '');
-      final sectionId = int.tryParse(data['Section'] ?? '');
+    if (!mounted) return;
 
-      if (classId != null && classes.any((c) => c['id'] == classId)) {
-        setState(() {
-          selectedClassId = classId;
-        });
-        // Sections fetch karein
-        await fetchSections(selectedClassId!);
-        if (sectionId != null && sections.any((s) => s['id'] == sectionId)) {
-          setState(() {
-            selectedSectionId = sectionId;
-          });
-        }
-      }
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to load homework details')),
-      );
+    _titleController.text = data['HomeworkTitle'] ?? '';
+    _descriptionController.text = data['Remark'] ?? '';
+    assignDate = DateTime.tryParse(data['WorkDate'] ?? '');
+    submissionDate = DateTime.tryParse(data['SubmissionDate'] ?? '');
+
+    selectedClassId = int.tryParse(data['Class'] ?? '');
+    if (selectedClassId != null) {
+      await fetchSections(selectedClassId!);
     }
-  }
-  // --- Updated `submitHomework` Function ---
 
+    selectedSectionId = int.tryParse(data['Section'] ?? '');
+    setState(() {});
+  }
+
+  // ============================
+  // 📤 SUBMIT / UPDATE HOMEWORK
+  // ============================
   Future<void> submitHomework() async {
-    // ... (rest of the validation code is the same)
+    if (_isSubmitting) return;
+
     if (selectedClassId == null ||
         selectedSectionId == null ||
         assignDate == null ||
         submissionDate == null ||
-        _titleController.text.isEmpty ||
-        _descriptionController.text.isEmpty) {
-      ScaffoldMessenger.of(
+        _titleController.text.trim().isEmpty ||
+        _descriptionController.text.trim().isEmpty) {
+      ScaffoldMessenger.maybeOf(
         context,
-      ).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
+      )?.showSnackBar(const SnackBar(content: Text("Please fill all fields")));
       return;
     }
 
+    _isSubmitting = true;
     setState(() => isLoading = true);
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
-    final isEditMode = widget.homeworkToEdit != null;
-    final apiUrl = isEditMode
-        ? 'https://schoolerp.edusathi.in/api/teacher/homework/update'
-        : 'https://schoolerp.edusathi.in/api/teacher/homework/store';
-
-    final request = http.MultipartRequest('POST', Uri.parse(apiUrl))
-      ..headers['Authorization'] = 'Bearer $token'
-      ..fields['Class'] = selectedClassId.toString()
-      ..fields['Section'] = selectedSectionId.toString()
-      ..fields['Title'] = _titleController
-          .text 
-      ..fields['Description'] =
-          _descriptionController.text; 
-
-    if (isEditMode) {
-      request.fields['HomeworkId'] = widget.homeworkToEdit!['id'].toString();
-      request.fields['AssignDate'] = DateFormat(
-        'yyyy-MM-dd',
-      ).format(assignDate!);
-      request.fields['SubmissionDate'] = DateFormat(
-        'yyyy-MM-dd',
-      ).format(submissionDate!);
-    } else {
-     
-      request.fields['AssignDate'] = DateFormat(
-        'yyyy-MM-dd',
-      ).format(assignDate!);
-      request.fields['SubmissionDate'] = DateFormat(
-        'yyyy-MM-dd',
-      ).format(submissionDate!);
-    }
-
-    if (selectedFile != null) {
-      request.files.add(
-        await http.MultipartFile.fromPath('Attachment', selectedFile!.path),
-      );
-    }
 
     try {
-      final response = await request.send();
-      final respStr = await response.stream.bytesToString();
-      final decoded = jsonDecode(respStr);
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token') ?? '';
 
-      setState(() => isLoading = false);
-      if (response.statusCode == 200) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(decoded['message'])));
+      final isEdit = widget.homeworkToEdit != null;
+      final url = isEdit
+          ? 'https://schoolerp.edusathi.in/api/teacher/homework/update'
+          : 'https://schoolerp.edusathi.in/api/teacher/homework/store';
+
+      final request = http.MultipartRequest('POST', Uri.parse(url))
+        ..headers['Authorization'] = 'Bearer $token'
+        ..fields['Class'] = selectedClassId.toString()
+        ..fields['Section'] = selectedSectionId.toString()
+        ..fields['Title'] = _titleController.text.trim()
+        ..fields['Description'] = _descriptionController.text.trim()
+        ..fields['AssignDate'] = DateFormat('yyyy-MM-dd').format(assignDate!)
+        ..fields['SubmissionDate'] = DateFormat(
+          'yyyy-MM-dd',
+        ).format(submissionDate!);
+
+      if (isEdit) {
+        request.fields['HomeworkId'] = widget.homeworkToEdit!['id'].toString();
+      }
+
+      if (selectedFile != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath('Attachment', selectedFile!.path),
+        );
+      }
+
+      final resp = await request.send();
+      final body = await resp.stream.bytesToString();
+      final decoded = jsonDecode(body);
+
+      if (!mounted) return;
+
+      if (resp.statusCode == 200) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text(decoded['message'] ?? 'Success')),
+        );
         Navigator.pop(context, true);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(decoded['message'] ?? 'Upload failed')),
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text(decoded['message'] ?? 'Failed')),
         );
       }
     } catch (e) {
-      setState(() => isLoading = false);
-      ScaffoldMessenger.of(
+      ScaffoldMessenger.maybeOf(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      )?.showSnackBar(SnackBar(content: Text('Error: $e')));
+    } finally {
+      _isSubmitting = false;
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
@@ -312,7 +277,7 @@ class _TeacherAddHomeworkPageState extends State<TeacherAddHomeworkPage> {
                   TextFormField(
                     controller: _descriptionController,
                     decoration: const InputDecoration(labelText: "Description"),
-                    maxLines: 3,
+                    maxLines: 6,
                   ),
                   const SizedBox(height: 10),
                   Column(

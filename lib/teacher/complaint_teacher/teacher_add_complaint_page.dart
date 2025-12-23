@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:edusathi_v2/auth_helper.dart';
 
 class TeacherAddComplaintPage extends StatefulWidget {
   const TeacherAddComplaintPage({super.key});
@@ -13,10 +12,13 @@ class TeacherAddComplaintPage extends StatefulWidget {
 
 class _TeacherAddComplaintPageState extends State<TeacherAddComplaintPage> {
   final _formKey = GlobalKey<FormState>();
+
   List<dynamic> students = [];
   int? selectedStudentId;
-  TextEditingController descriptionController = TextEditingController();
+  final TextEditingController descriptionController = TextEditingController();
+
   bool isSubmitting = false;
+  bool isLoadingStudents = true;
 
   @override
   void initState() {
@@ -24,77 +26,115 @@ class _TeacherAddComplaintPageState extends State<TeacherAddComplaintPage> {
     fetchStudents();
   }
 
-  Future<void> fetchStudents() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
-
-    final response = await http.post(
-      Uri.parse('https://schoolerp.edusathi.in/api/get_student'),
-      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-    );
-
-    if (response.statusCode == 200) {
-      setState(() {
-        students = jsonDecode(response.body);
-      });
-    } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Failed to load students")));
-    }
+  @override
+  void dispose() {
+    descriptionController.dispose();
+    super.dispose();
   }
 
-  Future<void> submitComplaint() async {
-    if (!_formKey.currentState!.validate()) return;
+  // ---------------- FETCH STUDENTS ----------------
+ Future<void> fetchStudents() async {
+  debugPrint("🟡 fetchStudents START");
 
-    if (selectedStudentId == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Please select a student")));
-      return;
-    }
-
-    setState(() => isSubmitting = true);
-    print(
-      '📤 Submitting: StudentId=$selectedStudentId, Description=${descriptionController.text}',
+  try {
+    final response = await AuthHelper.post(
+      context,
+      'https://schoolerp.edusathi.in/api/get_student',
     );
 
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
-    print("📌 Sending student_id: $selectedStudentId");
-    print("📌 Sending description: ${descriptionController.text.trim()}");
+    // token expired → AuthHelper logout kara dega
+    if (response == null || !mounted) return;
 
-    final response = await http.post(
-      Uri.parse('https://schoolerp.edusathi.in/api/teacher/complaint/store'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-    
-      },
+    debugPrint("🟢 STATUS CODE: ${response.statusCode}");
+    debugPrint("📦 RAW BODY: ${response.body}");
+
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+
+      setState(() {
+        students = decoded is List ? decoded : [];
+        isLoadingStudents = false;
+      });
+
+      debugPrint("📊 STUDENT COUNT: ${students.length}");
+    } else {
+      setState(() => isLoadingStudents = false);
+      _showSnackBar("Failed to load students");
+    }
+  } catch (e) {
+    debugPrint("❌ fetchStudents ERROR: $e");
+    if (!mounted) return;
+    setState(() {
+      students = [];
+      isLoadingStudents = false;
+    });
+    _showSnackBar("Error loading students");
+  }
+
+  debugPrint("🔚 fetchStudents END");
+}
+
+
+  // ---------------- SUBMIT COMPLAINT ----------------
+ Future<void> submitComplaint() async {
+  if (!_formKey.currentState!.validate()) return;
+
+  if (selectedStudentId == null) {
+    _showSnackBar("Please select a student");
+    return;
+  }
+
+  setState(() => isSubmitting = true);
+
+  debugPrint("🟡 submitComplaint START");
+
+  try {
+    final response = await AuthHelper.post(
+      context,
+      'https://schoolerp.edusathi.in/api/teacher/complaint/store',
       body: {
         'StudentId': selectedStudentId.toString(),
         'Description': descriptionController.text.trim(),
       },
     );
 
-    print("🔴 Status code: ${response.statusCode}");
-    print("🔴 Response body: ${response.body}");
+    if (response == null || !mounted) {
+      if (mounted) setState(() => isSubmitting = false);
+      return;
+    }
+
+    debugPrint("🟢 STATUS CODE: ${response.statusCode}");
+    debugPrint("📦 RAW BODY: ${response.body}");
+
+    final decoded = jsonDecode(response.body);
 
     setState(() => isSubmitting = false);
 
-    final decoded = jsonDecode(response.body);
-    if (decoded['status'] == true) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(decoded['message'] ?? "Complaint submitted")),
-      );
-      Navigator.pop(context, true); // After adding complaint successfully
+    if (response.statusCode == 200 && decoded['status'] == true) {
+      _showSnackBar(decoded['message'] ?? "Complaint submitted");
+      Navigator.pop(context, true);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(decoded['message'] ?? "Submission failed")),
-      );
+      _showSnackBar(decoded['message'] ?? "Submission failed");
     }
+  } catch (e) {
+    debugPrint("❌ submitComplaint ERROR: $e");
+    if (!mounted) return;
+    setState(() => isSubmitting = false);
+    _showSnackBar("Something went wrong");
   }
 
+  debugPrint("🔚 submitComplaint END");
+}
+
+
+  void _showSnackBar(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg)),
+    );
+  }
+
+  // ---------------- UI (UNCHANGED) ----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -138,9 +178,7 @@ class _TeacherAddComplaintPageState extends State<TeacherAddComplaintPage> {
                   );
                 }).toList(),
                 onChanged: (value) {
-                  setState(() {
-                    selectedStudentId = value;
-                  });
+                  setState(() => selectedStudentId = value);
                 },
               ),
               const SizedBox(height: 16),

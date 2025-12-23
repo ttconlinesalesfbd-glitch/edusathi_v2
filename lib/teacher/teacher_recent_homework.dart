@@ -1,12 +1,12 @@
 import 'dart:io';
-import 'package:edusathi_v2/teacher/teacher_homework_detail_page.dart';
-import 'package:edusathi_v2/teacher/teacher_homework_page.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
+import 'package:edusathi_v2/teacher/teacher_homework_detail_page.dart';
+import 'package:edusathi_v2/teacher/teacher_homework_page.dart';
 
 class TeacherRecentHomeworks extends StatelessWidget {
   final List<Map<String, dynamic>> homeworks;
@@ -16,7 +16,6 @@ class TeacherRecentHomeworks extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final limitedHomeworks = homeworks.take(5).toList();
-    print("📦 Received homeworks in widget: $homeworks");
 
     return Container(
       padding: const EdgeInsets.all(8),
@@ -49,7 +48,7 @@ class TeacherRecentHomeworks extends StatelessWidget {
                 onPressed: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => TeacherHomeworkPage()),
+                    MaterialPageRoute(builder: (_) => const TeacherHomeworkPage()),
                   );
                 },
                 child: const Text("View All"),
@@ -64,13 +63,14 @@ class TeacherRecentHomeworks extends StatelessWidget {
                   itemCount: limitedHomeworks.length,
                   itemBuilder: (context, index) {
                     final hw = limitedHomeworks[index];
+
                     return ListTile(
-                      leading: const Icon(Icons.book, color: Colors.deepPurple),
+                      leading:
+                          const Icon(Icons.book, color: Colors.deepPurple),
                       title: Text(hw['HomeworkTitle'] ?? ''),
                       subtitle: Text(
-  "Submission: ${formatDate(hw['SubmissionDate'])}",
-),
-
+                        "Submission: ${formatDate(hw['SubmissionDate'])}",
+                      ),
                       trailing: hw['Attachment'] != null
                           ? IconButton(
                               icon: const Icon(
@@ -78,14 +78,19 @@ class TeacherRecentHomeworks extends StatelessWidget {
                                 color: Colors.deepPurple,
                               ),
                               onPressed: () async {
-                                await requestStoragePermission();
+                                await _requestStoragePermission();
 
                                 final attachment = hw['Attachment'];
                                 final fileUrl =
                                     'https://schoolerp.edusathi.in/$attachment';
-                                final fileName = fileUrl.split('/').last;
+                                final fileName =
+                                    Uri.parse(fileUrl).pathSegments.last;
 
-                                await downloadFile(context, fileUrl, fileName);
+                                await _downloadFile(
+                                  context,
+                                  fileUrl,
+                                  fileName,
+                                );
                               },
                             )
                           : null,
@@ -106,54 +111,65 @@ class TeacherRecentHomeworks extends StatelessWidget {
     );
   }
 
-  Future<void> requestStoragePermission() async {
-    if (Platform.isAndroid) {
-      final androidInfo = await DeviceInfoPlugin().androidInfo;
-      final sdkInt = androidInfo.version.sdkInt;
+  // ---------------- PERMISSION (ANDROID ONLY) ----------------
+  static Future<void> _requestStoragePermission() async {
+    if (!Platform.isAndroid) return;
 
-      if (sdkInt >= 33) {
-        await [
-          Permission.photos,
-          Permission.videos,
-          Permission.audio,
-        ].request();
-      } else {
-        await Permission.storage.request();
-      }
+    final androidInfo = await DeviceInfoPlugin().androidInfo;
+    final sdkInt = androidInfo.version.sdkInt;
+
+    if (sdkInt >= 33) {
+      await [
+        Permission.photos,
+        Permission.videos,
+        Permission.audio,
+      ].request();
+    } else {
+      await Permission.storage.request();
     }
   }
 
-  Future<void> downloadFile(
+  // ---------------- SAFE FILE DOWNLOAD ----------------
+  static Future<void> _downloadFile(
     BuildContext context,
     String url,
     String fileName,
   ) async {
     try {
-      final dir = await getExternalStorageDirectory();
-      final filePath = '${dir!.path}/$fileName';
-
       final response = await http.get(Uri.parse(url));
-      final file = File(filePath);
-      await file.writeAsBytes(response.bodyBytes);
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("📥 Downloaded to $filePath")));
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        throw Exception("File download failed");
+      }
+
+      // ✅ iOS + Android safe directory
+      final dir = await getApplicationDocumentsDirectory();
+      final filePath = '${dir.path}/$fileName';
+
+      final file = File(filePath);
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("📥 Downloaded to $filePath")),
+      );
 
       await OpenFile.open(filePath);
     } catch (e) {
-      print("❌ Download failed: $e");
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("❌ Download failed")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("❌ Download failed")),
+      );
     }
   }
 }
+
+// ---------------- DATE FORMAT ----------------
 String formatDate(String? date) {
   if (date == null || date.isEmpty) return "";
   try {
     final parsedDate = DateTime.parse(date);
-    return "${parsedDate.day.toString().padLeft(2, '0')}-${parsedDate.month.toString().padLeft(2, '0')}-${parsedDate.year}";
+    return "${parsedDate.day.toString().padLeft(2, '0')}-"
+        "${parsedDate.month.toString().padLeft(2, '0')}-"
+        "${parsedDate.year}";
   } catch (_) {
     return date;
   }

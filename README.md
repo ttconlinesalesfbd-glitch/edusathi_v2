@@ -1,4 +1,4 @@
-# student_app
+# EduSathi V2
 
 A new Flutter project.
 

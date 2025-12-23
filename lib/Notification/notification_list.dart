@@ -1,13 +1,11 @@
 import 'dart:convert';
-import 'package:edusathi_v2/Attendance_UI/stu_attendance_page.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:edusathi_v2/complaint/complaint_detail_page.dart';
 import 'package:edusathi_v2/dashboard/dashboard_screen.dart';
-
+import 'package:edusathi_v2/Attendance_UI/stu_attendance_page.dart';
 import 'package:edusathi_v2/homework/homework_detail_page.dart';
-
 
 class NotificationListPage extends StatefulWidget {
   const NotificationListPage({super.key});
@@ -29,7 +27,7 @@ class _NotificationListPageState extends State<NotificationListPage> {
   Future<void> fetchNotifications() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token') ?? '';
+      final token = prefs.getString('auth_token') ?? '';
 
       final url = Uri.parse(
         "https://schoolerp.edusathi.in/api/student/notifications",

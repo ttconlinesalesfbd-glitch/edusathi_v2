@@ -16,10 +16,10 @@ class _StudentCalendarPageState extends State<StudentCalendarPage> {
   @override
   Widget build(BuildContext context) {
     final today = DateTime.now();
-    final formattedDay = DateFormat('EEEE').format(today); // e.g., Friday
+    final formattedDay = DateFormat('EEEE').format(today); 
     final formattedDate = DateFormat(
       'd MMMM yyyy',
-    ).format(today); // e.g., 7 November 2025
+    ).format(today); 
 
     return Scaffold(
       backgroundColor: Colors.grey.shade100,

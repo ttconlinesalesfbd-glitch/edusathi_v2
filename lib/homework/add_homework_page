@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -23,11 +22,16 @@ class _AddHomeworkPageState extends State<AddHomeworkPage> {
   String? selectedSection;
   File? attachment;
 
-  final List<String> classes = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
-  final List<String> sections = ['A', 'B', 'C', 'D'];
+  bool isSubmitting = false;
 
-  Future<void> _pickDate(BuildContext context, TextEditingController controller) async {
-    final DateTime? picked = await showDatePicker(
+  final List<String> classes = ['1','2','3','4','5','6','7','8','9','10'];
+  final List<String> sections = ['A','B','C','D'];
+
+  Future<void> _pickDate(
+    BuildContext context,
+    TextEditingController controller,
+  ) async {
+    final picked = await showDatePicker(
       context: context,
       initialDate: DateTime.now(),
       firstDate: DateTime(2020),
@@ -40,64 +44,102 @@ class _AddHomeworkPageState extends State<AddHomeworkPage> {
 
   Future<void> _pickFile() async {
     final result = await FilePicker.platform.pickFiles();
-    if (result != null) {
-      setState(() => attachment = File(result.files.single.path!));
+    if (result != null && result.files.single.path != null) {
+      if (!mounted) return;
+      setState(() {
+        attachment = File(result.files.single.path!);
+      });
     }
   }
 
+  // ====================================================
+  // 🔐 SAFE SUBMIT HOMEWORK (iOS + Android)
+  // ====================================================
   Future<void> _submitHomework() async {
+    if (isSubmitting) return;
+
     if (selectedClass == null ||
         selectedSection == null ||
         assignDateController.text.isEmpty ||
         submissionDateController.text.isEmpty ||
-        titleController.text.isEmpty ||
-        descriptionController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill all fields.")),
-      );
+        titleController.text.trim().isEmpty ||
+        descriptionController.text.trim().isEmpty) {
+      _showSnack("Please fill all fields.");
       return;
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+    if (!mounted) return;
+    setState(() => isSubmitting = true);
 
-    var request = http.MultipartRequest(
-      'POST',
-      Uri.parse('https://schoolerp.edusathi.in/api/teacher/homework'),
-    );
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token');
 
-    request.headers.addAll({
-      'Authorization': 'Bearer $token',
-      'Accept': 'application/json',
-    });
+      if (token == null || token.isEmpty) {
+  _showSnack("Session expired. Please login again.");
+  if (mounted) setState(() => isSubmitting = false);
+  return;
+}
 
-    request.fields['class'] = selectedClass!;
-    request.fields['section'] = selectedSection!;
-    request.fields['homework_title'] = titleController.text.trim();
-    request.fields['remark'] = descriptionController.text.trim();
-    request.fields['work_date'] = assignDateController.text.trim();
-    request.fields['submission_date'] = submissionDateController.text.trim();
 
-    if (attachment != null) {
-      request.files.add(await http.MultipartFile.fromPath('attachment', attachment!.path));
-    }
-
-    final response = await request.send();
-
-    if (response.statusCode == 200) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("✅ Homework submitted successfully!")),
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('https://schoolerp.edusathi.in/api/teacher/homework'),
       );
-      Navigator.pop(context, true); // <- inform previous screen to refresh
-    } else {
+
+      request.headers.addAll({
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      });
+
+      request.fields.addAll({
+        'class': selectedClass!,
+        'section': selectedSection!,
+        'homework_title': titleController.text.trim(),
+        'remark': descriptionController.text.trim(),
+        'work_date': assignDateController.text.trim(),
+        'submission_date': submissionDateController.text.trim(),
+      });
+
+      if (attachment != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'attachment',
+            attachment!.path,
+          ),
+        );
+      }
+
+      final response = await request.send();
       final body = await response.stream.bytesToString();
-      print("Homework submission failed: $body");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("❌ Submission failed. Please try again.")),
-      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        _showSnack("✅ Homework submitted successfully!");
+        Navigator.pop(context, true);
+      } else {
+        debugPrint("❌ Homework submit failed: $body");
+        _showSnack("❌ Submission failed. Please try again.");
+      }
+    } catch (e) {
+      debugPrint("❌ Homework error: $e");
+      _showSnack("Something went wrong");
+    } finally {
+      if (!mounted) return;
+      setState(() => isSubmitting = false);
     }
   }
 
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // ====================================================
+  // 🧱 UI (UNCHANGED)
+  // ====================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -106,7 +148,7 @@ class _AddHomeworkPageState extends State<AddHomeworkPage> {
         backgroundColor: Colors.deepPurple,
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: SingleChildScrollView(
           child: Column(
             children: [
@@ -116,20 +158,28 @@ class _AddHomeworkPageState extends State<AddHomeworkPage> {
                   labelText: 'Class',
                   border: OutlineInputBorder(),
                 ),
-                items: classes.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                onChanged: (val) => setState(() => selectedClass = val),
+                items: classes
+                    .map((c) =>
+                        DropdownMenuItem(value: c, child: Text(c)))
+                    .toList(),
+                onChanged: (v) => setState(() => selectedClass = v),
               ),
               const SizedBox(height: 12),
+
               DropdownButtonFormField<String>(
                 value: selectedSection,
                 decoration: const InputDecoration(
                   labelText: 'Section',
                   border: OutlineInputBorder(),
                 ),
-                items: sections.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
-                onChanged: (val) => setState(() => selectedSection = val),
+                items: sections
+                    .map((s) =>
+                        DropdownMenuItem(value: s, child: Text(s)))
+                    .toList(),
+                onChanged: (v) => setState(() => selectedSection = v),
               ),
               const SizedBox(height: 12),
+
               TextFormField(
                 controller: assignDateController,
                 readOnly: true,
@@ -141,6 +191,7 @@ class _AddHomeworkPageState extends State<AddHomeworkPage> {
                 onTap: () => _pickDate(context, assignDateController),
               ),
               const SizedBox(height: 12),
+
               TextFormField(
                 controller: submissionDateController,
                 readOnly: true,
@@ -152,6 +203,7 @@ class _AddHomeworkPageState extends State<AddHomeworkPage> {
                 onTap: () => _pickDate(context, submissionDateController),
               ),
               const SizedBox(height: 12),
+
               TextFormField(
                 controller: titleController,
                 decoration: const InputDecoration(
@@ -160,30 +212,45 @@ class _AddHomeworkPageState extends State<AddHomeworkPage> {
                 ),
               ),
               const SizedBox(height: 12),
+
               TextFormField(
                 controller: descriptionController,
+                maxLines: 4,
                 decoration: const InputDecoration(
                   labelText: 'Description',
                   border: OutlineInputBorder(),
                 ),
-                maxLines: 4,
               ),
               const SizedBox(height: 10),
+
               ElevatedButton.icon(
                 onPressed: _pickFile,
                 icon: const Icon(Icons.attach_file),
-                label: Text(attachment != null ? 'File Selected' : 'Attach File'),
+                label: Text(
+                  attachment != null ? 'File Selected' : 'Attach File',
+                ),
               ),
               const SizedBox(height: 20),
+
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _submitHomework,
+                  onPressed: isSubmitting ? null : _submitHomework,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.deepPurple,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
-                  child: const Text("Submit", style: TextStyle(fontSize: 16, color: Colors.white)),
+                  child: isSubmitting
+                      ? const CircularProgressIndicator(
+                          color: Colors.white,
+                        )
+                      : const Text(
+                          "Submit",
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.white,
+                          ),
+                        ),
                 ),
               ),
             ],

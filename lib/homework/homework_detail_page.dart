@@ -1,59 +1,80 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:open_file/open_file.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 
-
-class HomeworkDetailPage extends StatelessWidget {
+class HomeworkDetailPage extends StatefulWidget {
   final Map<String, dynamic> homework;
 
   const HomeworkDetailPage({super.key, required this.homework});
 
+  @override
+  State<HomeworkDetailPage> createState() => _HomeworkDetailPageState();
+}
+
+class _HomeworkDetailPageState extends State<HomeworkDetailPage> {
+  bool isDownloading = false;
+
   String formatDate(String? dateStr) {
     if (dateStr == null) return '';
     try {
-      final date = DateTime.parse(dateStr);
-      return DateFormat('dd-MM-yyyy').format(date);
-    } catch (e) {
+      return DateFormat('dd-MM-yyyy').format(DateTime.parse(dateStr));
+    } catch (_) {
       return dateStr;
     }
   }
 
-  Future<void> downloadFile(BuildContext context, String filePath) async {
+  // ====================================================
+  // 📥 SAFE FILE DOWNLOAD (iOS + Android)
+  // ====================================================
+  Future<void> downloadFile(String filePath) async {
+    if (isDownloading) return;
+
+    setState(() => isDownloading = true);
+
     try {
       final fullUrl = filePath.startsWith('http')
           ? filePath
           : 'https://schoolerp.edusathi.in/$filePath';
 
       final response = await http.get(Uri.parse(fullUrl));
+
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
-        throw Exception("Failed to download file.");
+        throw Exception("Download failed");
       }
 
-      // ✅ Use app-specific storage
       final dir = await getApplicationDocumentsDirectory();
       final fileName = filePath.split('/').last;
       final file = File('${dir.path}/$fileName');
 
       await file.writeAsBytes(response.bodyBytes, flush: true);
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Downloaded to ${file.path}")));
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Downloaded to ${file.path}")),
+      );
 
       await OpenFile.open(file.path);
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Download error: $e")));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Download error")),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() => isDownloading = false);
     }
   }
 
+  // ====================================================
+  // 🧱 UI (UNCHANGED)
+  // ====================================================
   @override
   Widget build(BuildContext context) {
-    final attachment = homework['Attachment'];
+    final attachment = widget.homework['Attachment'];
 
     return Scaffold(
       appBar: AppBar(
@@ -70,7 +91,7 @@ class HomeworkDetailPage extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              homework['HomeworkTitle'] ?? 'Untitled',
+              widget.homework['HomeworkTitle'] ?? 'Untitled',
               style: const TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
@@ -79,38 +100,48 @@ class HomeworkDetailPage extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // Assignment and Submission Dates in Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  "Assignment: ${formatDate(homework['WorkDate'])}",
-                  style: const TextStyle(fontSize: 14),
+                  "Assignment: ${formatDate(widget.homework['WorkDate'])}",
                 ),
                 Text(
-                  "Submission: ${formatDate(homework['SubmissionDate'])}",
-                  style: const TextStyle(fontSize: 14),
+                  "Submission: ${formatDate(widget.homework['SubmissionDate'])}",
                 ),
               ],
             ),
 
             const SizedBox(height: 20),
 
-            if ((homework['Remark'] ?? '').isNotEmpty) ...[
+            if ((widget.homework['Remark'] ?? '').toString().isNotEmpty) ...[
               const Text(
                 "📝 Remark:",
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 4),
-              Text(homework['Remark']),
+              Text(widget.homework['Remark']),
               const SizedBox(height: 20),
             ],
 
             if (attachment != null)
               Center(
                 child: ElevatedButton.icon(
-                  onPressed: () => downloadFile(context, attachment),
-                  icon: const Icon(Icons.download_rounded, color: Colors.white),
+                  onPressed:
+                      isDownloading ? null : () => downloadFile(attachment),
+                  icon: isDownloading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.download_rounded,
+                          color: Colors.white,
+                        ),
                   label: const Text(
                     "Download Attachment",
                     style: TextStyle(color: Colors.white),

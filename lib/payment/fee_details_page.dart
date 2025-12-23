@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:edusathi_v2/auth_helper.dart';
 
 class FeeDetailsPage extends StatefulWidget {
   const FeeDetailsPage({super.key});
@@ -53,36 +52,50 @@ class _FeeDetailsPageState extends State<FeeDetailsPage> {
   }
 
   Future<void> fetchFeeData(String monthKey) async {
+    if (!mounted) return;
+
     setState(() => isLoading = true);
 
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+    try {
+      final response = await AuthHelper.post(
+        context,
+        apiUrl,
+        body: {'Month': monthKey},
+      );
 
-    final response = await http.post(
-      Uri.parse(apiUrl),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({'Month': monthKey}),
-    );
+      // Token expired → AuthHelper already logout kara dega
+      if (response == null) return;
 
-    print("📥 Fee API Response (${monthKey}): ${response.body}");
+      if (!mounted) return;
 
-    if (response.statusCode == 200) {
-      setState(() {
-        feeData = jsonDecode(response.body);
-        isLoading = false;
-      });
-    } else {
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+
+        setState(() {
+          feeData = decoded is List ? decoded : [];
+          isLoading = false;
+        });
+      } else {
+        setState(() {
+          feeData = [];
+          isLoading = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to fetch fee details")),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         feeData = [];
         isLoading = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to fetch fee details")),
-      );
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Network error")));
     }
   }
 

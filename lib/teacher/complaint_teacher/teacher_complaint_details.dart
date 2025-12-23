@@ -1,8 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:edusathi_v2/auth_helper.dart';
 
 class TeacherComplaintDetailPage extends StatefulWidget {
   final int complaintId;
@@ -21,14 +20,17 @@ class TeacherComplaintDetailPage extends StatefulWidget {
   });
 
   @override
-  State<TeacherComplaintDetailPage> createState() => _TeacherComplaintDetailPageState();
+  State<TeacherComplaintDetailPage> createState() =>
+      _TeacherComplaintDetailPageState();
 }
 
-class _TeacherComplaintDetailPageState extends State<TeacherComplaintDetailPage> {
+class _TeacherComplaintDetailPageState
+    extends State<TeacherComplaintDetailPage> {
   List<dynamic> history = [];
   bool isLoading = true;
 
-  final String apiUrl = 'https://schoolerp.edusathi.in/api/teacher/complaint/history';
+  final String apiUrl =
+      'https://schoolerp.edusathi.in/api/teacher/complaint/history';
 
   @override
   void initState() {
@@ -36,61 +38,83 @@ class _TeacherComplaintDetailPageState extends State<TeacherComplaintDetailPage>
     fetchComplaintHistory();
   }
 
-  Future<void> fetchComplaintHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+  // ---------------- FETCH HISTORY ----------------
+ Future<void> fetchComplaintHistory() async {
+  debugPrint("🟡 fetchComplaintHistory START");
+  debugPrint("🆔 ComplaintId: ${widget.complaintId}");
 
-    final response = await http.post(
-      Uri.parse(apiUrl),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
+  try {
+    final response = await AuthHelper.post(
+      context,
+      'https://schoolerp.edusathi.in/api/teacher/complaint/history',
+      body: {
+        'ComplaintId': widget.complaintId.toString(),
       },
-      body: jsonEncode({'ComplaintId': widget.complaintId}),
     );
 
-    print("📥 Teacher Complaint History: ${response.body}");
+    // token expired → AuthHelper logout kara dega
+    if (response == null || !mounted) return;
+
+    debugPrint("🟢 STATUS CODE: ${response.statusCode}");
+    debugPrint("📦 RAW BODY: ${response.body}");
 
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
-      if (decoded is List) {
-        setState(() {
-          history = decoded;
-          isLoading = false;
-        });
-      }
+
+      setState(() {
+        history = decoded is List ? decoded : [];
+        isLoading = false;
+      });
+
+      debugPrint("📊 HISTORY COUNT: ${history.length}");
     } else {
       setState(() {
         history = [];
         isLoading = false;
       });
+      debugPrint("⚠️ Non-200 response");
     }
+  } catch (e) {
+    debugPrint("❌ fetchComplaintHistory ERROR: $e");
+    if (!mounted) return;
+    setState(() {
+      history = [];
+      isLoading = false;
+    });
   }
 
+  debugPrint("🔚 fetchComplaintHistory END");
+}
+
+  // ---------------- HELPERS ----------------
   String getStatusText(int status) => status == 1 ? "Solved" : "Pending";
 
-  Color getStatusColor(int status) => status == 1 ? Colors.green : Colors.orange;
+  Color getStatusColor(int status) =>
+      status == 1 ? Colors.green : Colors.orange;
 
   String formatDate(String rawDate) {
     try {
       final parsedDate = DateTime.parse(rawDate);
       return DateFormat('dd-MM-yyyy').format(parsedDate);
-    } catch (e) {
+    } catch (_) {
       return rawDate;
     }
   }
 
+  // ---------------- UI (UNCHANGED) ----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Complaint Details", style: TextStyle(color: Colors.white)),
+        title:
+            const Text("Complaint Details", style: TextStyle(color: Colors.white)),
         backgroundColor: Colors.deepPurple,
         leading: const BackButton(color: Colors.white),
       ),
       body: isLoading
-          ? const Center(child: CircularProgressIndicator(color: Colors.deepPurple))
+          ? const Center(
+              child: CircularProgressIndicator(color: Colors.deepPurple),
+            )
           : SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -99,7 +123,8 @@ class _TeacherComplaintDetailPageState extends State<TeacherComplaintDetailPage>
                   // 🔷 Complaint Card
                   Card(
                     elevation: 4,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
@@ -116,18 +141,23 @@ class _TeacherComplaintDetailPageState extends State<TeacherComplaintDetailPage>
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              const Icon(Icons.date_range, color: Colors.deepPurple),
+                              const Icon(Icons.date_range,
+                                  color: Colors.deepPurple),
                               const SizedBox(width: 8),
                               Text(
                                 formatDate(widget.date),
-                                style: const TextStyle(fontWeight: FontWeight.bold),
+                                style:
+                                    const TextStyle(fontWeight: FontWeight.bold),
                               ),
                               const Spacer(),
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: getStatusColor(widget.status).withOpacity(0.1),
-                                  border: Border.all(color: getStatusColor(widget.status)),
+                                  color: getStatusColor(widget.status)
+                                      .withOpacity(0.1),
+                                  border: Border.all(
+                                      color: getStatusColor(widget.status)),
                                   borderRadius: BorderRadius.circular(20),
                                 ),
                                 child: Text(
@@ -154,7 +184,8 @@ class _TeacherComplaintDetailPageState extends State<TeacherComplaintDetailPage>
                   // 🧾 History Section
                   const Text(
                     "Complaint History",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   if (history.isEmpty)
@@ -177,17 +208,21 @@ class _TeacherComplaintDetailPageState extends State<TeacherComplaintDetailPage>
                             children: [
                               Row(
                                 children: [
-                                  const Icon(Icons.timeline, size: 18, color: Colors.deepPurple),
+                                  const Icon(Icons.timeline,
+                                      size: 18, color: Colors.deepPurple),
                                   const SizedBox(width: 6),
                                   Text(
                                     formatDate(item['Date'] ?? ''),
-                                    style: const TextStyle(fontWeight: FontWeight.bold),
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold),
                                   ),
                                 ],
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                item['Description']?.replaceAll(r'\r\n', '\n') ?? '',
+                                item['Description']
+                                        ?.replaceAll(r'\r\n', '\n') ??
+                                    '',
                                 style: const TextStyle(fontSize: 14),
                               ),
                             ],

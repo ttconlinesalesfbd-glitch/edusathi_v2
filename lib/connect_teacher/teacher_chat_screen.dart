@@ -1,13 +1,10 @@
 import 'dart:convert';
-import 'package:edusathi_v2/connect_teacher/teacher_chat.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-
-
+import 'package:edusathi_v2/auth_helper.dart';
+import 'package:edusathi_v2/connect_teacher/teacher_chat.dart';
 
 class TeacherChatStudentListPage extends StatefulWidget {
-  const TeacherChatStudentListPage({Key? key}) : super(key: key);
+  const TeacherChatStudentListPage({super.key});
 
   @override
   State<TeacherChatStudentListPage> createState() =>
@@ -18,9 +15,9 @@ class _TeacherChatStudentListPageState
     extends State<TeacherChatStudentListPage> {
   List<dynamic> students = [];
   List<dynamic> filteredStudents = [];
+
   bool _isLoading = true;
   bool _isSearching = false;
-  String searchQuery = "";
 
   @override
   void initState() {
@@ -28,46 +25,68 @@ class _TeacherChatStudentListPageState
     fetchStudents();
   }
 
+  // ====================================================
+  // 🔐 SAFE FETCH STUDENTS (iOS + Android)
+  // ====================================================
   Future<void> fetchStudents() async {
+    if (!mounted) return;
+
+    setState(() => _isLoading = true);
+
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token');
-
-      if (token == null) {
-        throw Exception("No token found in SharedPreferences");
-      }
-
-      final response = await http.post(
-        Uri.parse("https://schoolerp.edusathi.in/api/teacher/student/list"),
-        headers: {"Authorization": "Bearer $token"},
-        body: {"type": "all"},
+      final res = await AuthHelper.post(
+        context,
+        "https://schoolerp.edusathi.in/api/teacher/student/list",
       );
 
-      print("🟢 Status: ${response.statusCode}");
-      print("🟢 Body: ${response.body}");
+      // AuthHelper already handles 401 + logout
+      if (res == null) return;
 
-      if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
+      debugPrint("📥 STUDENT LIST STATUS: ${res.statusCode}");
+      debugPrint("📥 STUDENT LIST BODY: ${res.body}");
+
+      if (res.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(res.body);
+
+        if (!mounted) return;
         setState(() {
           students = data;
           filteredStudents = data;
-          _isLoading = false;
         });
       } else {
-        throw Exception("Failed to fetch student list");
+        if (!mounted) return;
+        setState(() {
+          students.clear();
+          filteredStudents.clear();
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load students")),
+        );
       }
     } catch (e) {
-      print("❌ Error: $e");
+      debugPrint("🚨 FETCH STUDENTS ERROR: $e");
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Something went wrong")),
+      );
+    } finally {
+      if (!mounted) return;
       setState(() => _isLoading = false);
     }
   }
 
+  // ====================================================
+  // 🔍 SEARCH FILTER
+  // ====================================================
   void _filterStudents(String query) {
+    if (!mounted) return;
+
     setState(() {
-      searchQuery = query;
       filteredStudents = students
           .where(
-            (student) => student['StudentName']
+            (s) => s['StudentName']
                 .toString()
                 .toLowerCase()
                 .contains(query.toLowerCase()),
@@ -76,6 +95,9 @@ class _TeacherChatStudentListPageState
     });
   }
 
+  // ====================================================
+  // 🧱 UI (UNCHANGED)
+  // ====================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -111,30 +133,27 @@ class _TeacherChatStudentListPageState
                 _isSearching = !_isSearching;
                 if (!_isSearching) {
                   filteredStudents = students;
-                  searchQuery = '';
                 }
               });
             },
           ),
-          
         ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : filteredStudents.isEmpty
-          ? const Center(
-              child: Text(
-                "No students found",
-                style: TextStyle(color: Colors.grey, fontSize: 16),
-              ),
-            )
-          : ListView.builder(
-              itemCount: filteredStudents.length,
-              itemBuilder: (context, index) {
-                final student = filteredStudents[index];
-                return _buildStudentCard(student);
-              },
-            ),
+              ? const Center(
+                  child: Text(
+                    "No students found",
+                    style: TextStyle(color: Colors.grey, fontSize: 16),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: filteredStudents.length,
+                  itemBuilder: (context, index) {
+                    return _buildStudentCard(filteredStudents[index]);
+                  },
+                ),
     );
   }
 
@@ -156,12 +175,13 @@ class _TeacherChatStudentListPageState
             ),
           );
         },
-
         leading: CircleAvatar(
           radius: 28,
           backgroundColor: Colors.grey.shade200,
-          backgroundImage: NetworkImage(student['StudentPhoto'] ?? ''),
-          onBackgroundImageError: (_, __) {},
+          backgroundImage: student['StudentPhoto'] != null &&
+                  student['StudentPhoto'].toString().isNotEmpty
+              ? NetworkImage(student['StudentPhoto'])
+              : null,
         ),
         title: Row(
           children: [

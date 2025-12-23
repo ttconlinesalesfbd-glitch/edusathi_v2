@@ -1,8 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:edusathi_v2/auth_helper.dart';
 
 class StudentAttendanceScreen extends StatefulWidget {
   const StudentAttendanceScreen({super.key});
@@ -17,6 +16,67 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
   Map<String, String> _attendanceMap = {};
   bool _isLoading = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _fetchAttendance();
+  }
+
+  // ====================================================
+  // 🔐 SAFE FETCH ATTENDANCE (iOS + Android)
+  // ====================================================
+  Future<void> _fetchAttendance() async {
+    if (!mounted) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final formattedMonth = DateFormat('yyyy-MM').format(_focusedMonth);
+
+      final res = await AuthHelper.post(
+        context,
+        'https://schoolerp.edusathi.in/api/student/attendance',
+        body: {'Month': formattedMonth},
+      );
+
+      // AuthHelper handles 401 + logout
+      if (res == null) return;
+
+      debugPrint("📥 STUDENT ATTENDANCE STATUS: ${res.statusCode}");
+      debugPrint("📥 STUDENT ATTENDANCE BODY: ${res.body}");
+
+      if (res.statusCode == 200) {
+        final List data = jsonDecode(res.body);
+
+        if (!mounted) return;
+        setState(() {
+          _attendanceMap = {
+            for (final item in data)
+              item['date'].toString(): item['status'].toString(),
+          };
+        });
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load attendance")),
+        );
+      }
+    } catch (e) {
+      debugPrint("🚨 STUDENT ATTENDANCE ERROR: $e");
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Something went wrong")),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // ====================================================
+  // 📊 CALCULATE TOTALS (UNCHANGED)
+  // ====================================================
   Map<String, int> _calculateTotals() {
     int present = 0;
     int absent = 0;
@@ -25,7 +85,7 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
     int halfDay = 0;
     int notMarked = 0;
 
-    _attendanceMap.forEach((date, status) {
+    for (final status in _attendanceMap.values) {
       switch (status) {
         case 'Present':
           present++;
@@ -45,7 +105,7 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
         default:
           notMarked++;
       }
-    });
+    }
 
     return {
       'Present': present,
@@ -55,40 +115,6 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
       'HalfDay': halfDay,
       'Not Marked': notMarked,
     };
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchAttendance();
-  }
-
-  Future<void> _fetchAttendance() async {
-    setState(() => _isLoading = true);
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
-
-    final formattedMonth = DateFormat('yyyy-MM').format(_focusedMonth);
-    final url = Uri.parse(
-      'https://schoolerp.edusathi.in/api/student/attendance',
-    );
-
-    final response = await http.post(
-      url,
-      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-      body: {'Month': formattedMonth},
-    );
-
-    if (response.statusCode == 200) {
-      final List data = json.decode(response.body);
-      setState(() {
-        _attendanceMap = {for (var item in data) item['date']: item['status']};
-        _isLoading = false;
-      });
-    } else {
-      setState(() => _isLoading = false);
-      print('❌ Failed to load student attendance');
-    }
   }
 
   @override
@@ -116,7 +142,7 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
               const SizedBox(height: 12),
               _buildCalendarContainer(year, month, daysInMonth, startWeekday),
               const SizedBox(height: 10),
-              _buildSummaryBox(totals), // ✅ Updated Summary Box
+              _buildSummaryBox(totals),
             ],
           ),
           if (_isLoading)
@@ -124,7 +150,9 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
               child: Container(
                 color: Colors.black.withOpacity(0.1),
                 child: const Center(
-                  child: CircularProgressIndicator(color: Colors.deepPurple),
+                  child: CircularProgressIndicator(
+                    color: Colors.deepPurple,
+                  ),
                 ),
               ),
             ),
@@ -133,6 +161,9 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
     );
   }
 
+  // ====================================================
+  // 📅 CALENDAR UI (UNCHANGED)
+  // ====================================================
   Widget _buildCalendarContainer(
     int year,
     int month,
@@ -150,7 +181,7 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
       ),
       child: Column(
         children: [
-          // 🔹 Month Selector
+          // Month Header
           Container(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
             decoration: const BoxDecoration(
@@ -170,8 +201,8 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
                         _focusedMonth.year,
                         _focusedMonth.month - 1,
                       );
-                      _fetchAttendance();
                     });
+                    _fetchAttendance();
                   },
                 ),
                 Text(
@@ -190,24 +221,24 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
                         _focusedMonth.year,
                         _focusedMonth.month + 1,
                       );
-                      _fetchAttendance();
                     });
+                    _fetchAttendance();
                   },
                 ),
               ],
             ),
           ),
 
-          // 🔹 Weekdays Header
+          // Weekdays
           Padding(
             padding: const EdgeInsets.all(10),
             child: Row(
               children: ['S', 'M', 'T', 'W', 'T', 'F', 'S']
                   .map(
-                    (day) => Expanded(
+                    (d) => Expanded(
                       child: Center(
                         child: Text(
-                          day,
+                          d,
                           style: TextStyle(
                             color: Colors.grey[600],
                             fontWeight: FontWeight.w600,
@@ -220,7 +251,7 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
             ),
           ),
 
-          // 🔹 Calendar Grid
+          // Calendar Grid
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: GridView.builder(
@@ -297,7 +328,9 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
     );
   }
 
-  // ✅ Summary Box (Analysis)
+  // ====================================================
+  // 📊 SUMMARY BOX (UNCHANGED)
+  // ====================================================
   Widget _buildSummaryBox(Map<String, int> totals) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
