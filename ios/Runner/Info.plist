@@ -98,7 +98,7 @@
     <!-- ================= KEYCHAIN (🔥 TOKEN SAVE FIX) ================= -->
     <key>KeychainSharing</key>
     <array>
-        <string>$(AppIdentifierPrefix)com.techinnovationapp.edusathi-v2</string>
+        <string>$(AppIdentifierPrefix)com.techinnovationapp.edusathiv2</string>
     </array>
 
     <!-- ================= PHOTO / FILE ACCESS ================= -->
